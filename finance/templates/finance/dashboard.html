@@ -3,6 +3,7 @@
 
 {% block content %}
 
+
 <div class="container mx-auto p-6">
     <div class="text-center mb-8">
         <h1 class="text-3xl font-bold text-indigo-600">Welcome to your dashboard
@@ -12,6 +13,21 @@
         </p>
 
     </div>
+
+
+<form method="get" class="flex justify-center mb-8">
+    <input type="month" 
+           name="month_year" 
+           value="{{ selected_month }}" 
+           class="border px-3 py-2 rounded">
+
+    <button type="submit" 
+            class="ml-3 bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition">
+        View
+    </button>
+</form>
+
+
 
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8 mb-8">
         <div class="bg-white p-6 rounded-lg shadow-md">
@@ -28,10 +44,38 @@
         </div>
     </div>
 
+
+<!-- FORECAST & BUDGET ADVICE -->
+<div class="bg-white p-6 rounded-lg shadow-md mb-8">
+    <h2 class="text-2xl font-semibold text-gray-800 mb-4">Next Month Forecast</h2>
+
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-6 text-center">
+        <div>
+            <p class="text-sm text-gray-600">Predicted Income</p>
+            <p class="text-2xl font-bold text-green-600">${{ predicted_income }}</p>
+        </div>
+        <div>
+            <p class="text-sm text-gray-600">Predicted Expenses</p>
+            <p class="text-2xl font-bold text-red-600">${{ predicted_expense }}</p>
+        </div>
+        <div>
+            <p class="text-sm text-gray-600">Expected Savings</p>
+            <p class="text-2xl font-bold text-indigo-600">${{ predicted_savings }}</p>
+        </div>
+    </div>
+
+    <div class="mt-6 p-4 bg-indigo-50 border-l-4 border-indigo-600 rounded">
+        <p class="text-gray-800 font-medium">{{ budget_advice }}</p>
+    </div>
+</div>
+
+
+
     <div class="bg-white p-6 rounded-lg shadow-md mb-8">
         <h2 class="text-2xl font-semibold text-gray-800 mb-4">Your Goals</h2>
         <ul class="space-y-4">
             {% for item in goal_progress %}
+                
             <li class="flex justify-between items-center border-b pb-4">
                 <div class="text-gray-800 flex-1">
                     <p class="font-semibold">{{ item.goal.name }}</p>
@@ -39,7 +83,13 @@
                     <p class="text-sm text-gray-600">Deadline: {{ item.goal.deadline }}</p>
                 </div>
                 <div class="text-right ml-4">
-                    <p class="text-xl font-bold text-indigo-500 mb-2">{{ item.progress|floatformat:2 }}%</p>
+                    <div class="w-48">
+    <div class="flex justify-between text-sm mb-1">
+        <span class="text-gray-700 font-medium">{{ item.progress|floatformat:1 }}%</span>
+    </div>
+    
+</div>
+
                     <div class="flex gap-2">
                         <a href="{% url 'goal_edit' item.goal.id %}" 
                            class="bg-blue-600 text-white px-4 py-1 rounded hover:bg-blue-700 transition text-sm">
@@ -53,13 +103,50 @@
                     </div>
                 </div>
             </li>
+
             {% endfor %}
         </ul>
     </div>
-    <div class="text-center">
-        <a href="{% url 'goal_add' %}" class="bg-indigo-600 text-white px-6 py-2 rounded hover:bg-indigo-700 transition">
-            Add New Goal</a>
+    
+<!-- GOAL OPTIMIZATION RECOMMENDATIONS -->
+<div class="bg-white p-6 rounded-lg shadow-md mt-8">
+    <h2 class="text-2xl font-semibold text-gray-800 mb-4">Goal Saving Recommendations</h2>
+
+    {% for rec in goal_recommendations %}
+    <div class="border rounded p-4 mb-4">
+        <p class="text-lg font-semibold">{{ rec.goal_name }}</p>
+
+        <p class="text-gray-600 text-sm">
+            Remaining: ${{ rec.remaining|floatformat:2 }} • Months left: {{ rec.months_left }}
+        </p>
+
+        <p class="mt-2 text-indigo-600 font-medium">
+            Recommended Increase in Monthly Savings:
+            ${{ rec.recommended_extra|floatformat:2 }} / month
+        </p>
+
+        <p class="text-sm text-gray-700 mt-1">{{ rec.message }}</p>
+
+        <!-- ACTION BUTTONS MUST BE INSIDE LOOP -->
+        <div class="mt-3 flex gap-2">
+
+            <a href="{% url 'goal_edit' rec.goal_id %}" class="bg-gray-200 px-3 py-1 rounded text-sm">
+                Edit Goal
+            </a>
+
+        </div>
     </div>
+
+    {% empty %}
+        <p class="text-gray-600">No active goals to optimize.</p>
+    {% endfor %}
+</div>
+
+<div class="text-center mt-4">
+    <a href="{% url 'goal_add' %}" class="bg-indigo-600 text-white px-6 py-2 rounded hover:bg-indigo-700 transition">
+        Add New Goal
+    </a>
+</div>
 
 </div>
 
