@@ -11,11 +11,15 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+import environ
 
+
+env = environ.Env(DB_CONNECTION=(bool, False))
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-
+environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
@@ -25,7 +29,7 @@ SECRET_KEY = 'django-insecure-589bp*1vbzw6+0i@9z+j^n%6n278x+wg7(65teio=hw3mnp_qr
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
@@ -39,7 +43,9 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'finance',
     'import_export',
-    'django_celery_beat',
+    #'django_celery_beat',
+    'rest_framework',
+    'rest_framework_simplejwt',
 ]
 
 MIDDLEWARE = [
@@ -51,6 +57,14 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+REST_FRAMEWORK = {
+    
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    )    
+}
 
 ROOT_URLCONF = 'financeBuddy.urls'
 
@@ -71,20 +85,35 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'financeBuddy.wsgi.application'
 
+DB_ENGINE=env("DB_ENGINE")
+DB_NAME=env("DB_NAME")
+DB_PASSWORD=env("DB_PASSWORD")
+DB_USER=env("DB_USER")
+DB_HOST=env("DB_HOST")
+DB_PORT=env("DB_PORT")
 
+DATABASES = {
+   'default': {
+       'ENGINE': DB_ENGINE,
+       'NAME': DB_NAME,
+       'USER': DB_USER,
+       'PASSWORD': DB_PASSWORD,
+       'HOST': DB_HOST,
+       'PORT': DB_PORT,
+       'CHARSET': 'utf8',
+       'COLLATION': 'utf8_general_ci',
+   }
+}
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': 'financebuddy',
-        'USER': 'root',
-        'PASSWORD': '',
-        'HOST': 'localhost',
-        'PORT': '3306',
-    }
-}
+# DATABASES = {
+#     'default': {
+#         'ENGINE': 'django.db.backends.sqlite3',
+#         'NAME': BASE_DIR / 'db.sqlite3',
+#     }
+# }
+DB_CONNECTION=env.bool("DB_CONNECTION")
 
 
 # Password validation
@@ -131,7 +160,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = 'login'
 
-CELERY_BROKER_URL = "redis://localhost:6379/0"
-CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+# CELERY_BROKER_URL = "redis://localhost:6379/0"
+# CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
 
