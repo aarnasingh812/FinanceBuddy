@@ -1,15 +1,21 @@
 from django.shortcuts import render, redirect, HttpResponse, get_object_or_404
 from django.views import View
-from finance.forms import RegisterForm, TransactionForm, GoalForm
+from finance.forms import TransactionForm, GoalForm
 from django.contrib.auth import login
 from django.contrib.auth.mixins import LoginRequiredMixin
-from finance.models import Transaction, Goal
+from finance.models import Transaction, Goal, User
 from django.db.models import Sum
 from .admin import TransactionResource
 from django.contrib import messages
 from django.utils import timezone
 from django.views.decorators.http import require_POST
-
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from django.contrib.auth.hashers import check_password
+from .serializers import RegisterSerializer, LoginSerializer, UserSerializer
+from helpers.jwt_token_helper import get_tokens_for_user
 from finance.utils.forecasting import ml_forecast_next_month
 from finance.utils.budget_advice import generate_budget_advice
 from finance.utils.optimizer import recommend_saving_for_goal
@@ -17,23 +23,55 @@ from finance.utils.optimizer import recommend_saving_for_goal
 
 # Create your views here.
 
+class RegisterView(APIView):
+    permission_classes = [AllowAny]
+    def post(self, request):
 
+        serializer = RegisterSerializer(data=request.data)
 
-class RegisterView(View):
-    def get(self, request, *args, **kwargs):
-        form=RegisterForm()
-        return render(request, 'finance/register.html', {'form':form})
+        if serializer.is_valid():
+            user = serializer.save()
+            tokens = get_tokens_for_user(user)
+            return Response({
+                "status": "success",
+                "message": "User created successfully",
+                "tokens": tokens,
+                "user": {"id": user.id, "username": user.username}
+            }, status=status.HTTP_201_CREATED)
+
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
-    def post(self, request, *args, **kwargs):
-        form = RegisterForm(request.POST)
-        if form.is_valid():
-            user = form.save()
-            login(request, user)
-            return redirect('dashboard')
-        return render(request, 'finance/register.html', {'form':form})    
+class LoginView(APIView):
+    permission_classes = [AllowAny]
 
-class DashboardView(LoginRequiredMixin, View):
+    def post(self, request):
+        serializer = LoginSerializer(data=request.data)
+        
+        if serializer.is_valid():
+            username = serializer.validated_data['username']
+            password = serializer.validated_data['password']
+            try:
+                user = User.objects.get(username=username)    
+                if check_password(password, user.password):
+                    tokens = get_tokens_for_user(user)
+                    user_serializer = UserSerializer(user)
+                    return Response({
+                        "message": "Login successful",
+                        "tokens": tokens,
+                        "user": user_serializer.data
+                    }, status=status.HTTP_200_OK)
+                else:
+                    return Response({"error": "Invalid password"}, status=status.HTTP_401_UNAUTHORIZED)
+                
+            except User.DoesNotExist:
+                return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    
+class DashboardView(APIView):
+    permission_classes = (IsAuthenticated,)
     def get(self, request, *args, **kwargs):
+        user = request.user
+        user_serializer = UserSerializer(user)
         today = timezone.now()
 
         # Month Filter
