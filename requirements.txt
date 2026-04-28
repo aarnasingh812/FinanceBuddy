@@ -1,0 +1,6 @@
+djangorestframework-simplejwt
+django
+djangorestframework
+mysqlclient
+django-cors-headers
+pandas
