@@ -13,9 +13,8 @@ TransactionCreateSerializer, GoalCreateSerializer, GoalUpdateSerializer,
 GoalDeleteSerializer, TransactionUpdateSerializer, TransactionDeleteSerializer,
 TransactionSerializer
 )
-
+from helpers.bulk_upload_helper import generate_transaction_template, process_bulk_upload
 from helpers.jwt_token_helper import get_tokens_for_user
-from finance.admin import TransactionResource
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
 class RegisterView(APIView):
@@ -220,21 +219,33 @@ class GoalView(APIView):
             except Goal.DoesNotExist:
                 return Response({"error": "Goal not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
 
 
-def export_transactions(request):
-    user_transactions = Transaction.objects.filter(user=request.user)
+class BulkTransactionView(APIView):
+    permission_classes = [IsAuthenticated]
 
-    transactions_resource = TransactionResource()
-    dataset = transactions_resource.export(queryset=user_transactions)
+    def get(self, request, *args, **kwargs):
+        mode = request.GET.get('mode')
+        if mode != 'download':
+            return Response({'error': 'Invalid mode. Use ?mode=download to get the template.'},status=status.HTTP_400_BAD_REQUEST)
+        return generate_transaction_template()
 
-    excel_data=dataset.export('xlsx')
+    def post(self, request, *args, **kwargs):
+        
+        mode = request.GET.get('mode')
+        if mode != 'upload':
+            return Response({'error': 'Invalid mode. Use ?mode=upload to upload transactions.'}, status=status.HTTP_400_BAD_REQUEST)
 
-    response =  HttpResponse(excel_data, content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'error': 'No file provided. Send the file with key "file".'}, status=status.HTTP_400_BAD_REQUEST)
 
-    # header for download the file
-    response['Content-Disposition'] = 'attachment; filename=transactions.xlsx'
-    return response
+        if not file.name.endswith('.xlsx'):
+            return Response({'error': 'Invalid file type. Only .xlsx files are accepted.'}, status=status.HTTP_400_BAD_REQUEST)
 
+        success, data = process_bulk_upload(file, request.user)
 
+        if success:
+            return Response({'status': 'success', **data}, status=status.HTTP_201_CREATED)
+        else:
+            return Response({'status': 'error', **data}, status=status.HTTP_400_BAD_REQUEST)

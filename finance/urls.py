@@ -1,5 +1,8 @@
 from django.urls import path
-from finance.views import RegisterView, DashboardView, TransactionView, TransactionListView, GoalView, export_transactions, LoginView, LogoutView
+from finance.views.views import (
+    RegisterView, DashboardView, TransactionView, TransactionListView,
+    GoalView, LoginView, LogoutView, BulkTransactionView,
+)
 
 
 
@@ -10,7 +13,9 @@ urlpatterns = [
     path('dashboard', DashboardView.as_view(), name="dashboard"),
     path('transaction', TransactionView.as_view(), name="transaction"),
     path('transaction/list', TransactionListView.as_view(), name="transaction_list"),
+    path('transaction/bulk', BulkTransactionView.as_view(), name="transaction_bulk"),
     path('goal', GoalView.as_view(), name="goal"),
-    path('generate-report', export_transactions, name="export_transactions"),
+   # path('generate-report', export_transactions, name="export_transactions"),
     
 ]
+

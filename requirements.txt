@@ -7,3 +7,4 @@ pandas
 django-environ
 mysql-connector-python
 django-import-export
+openpyxl
