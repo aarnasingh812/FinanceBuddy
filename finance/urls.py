@@ -1,16 +1,16 @@
 from django.urls import path
-from finance.views import RegisterView, DashboardView, TransactionCreateView, TransactionListView, GoalCreateView, export_transactions, GoalUpdateView, GoalDeleteView, LoginView
+from finance.views import RegisterView, DashboardView, TransactionView, TransactionListView, GoalView, export_transactions, LoginView, LogoutView
 
 
 
 urlpatterns = [
     path('register/', RegisterView.as_view(), name="register"),
-    path('login/', LoginView.as_view(), name="register"),
-    path('', DashboardView.as_view(), name="dashboard"),
-    path('transaction/add/', TransactionCreateView.as_view(), name="transaction_add"),
-    path('transactions/', TransactionListView.as_view(), name="transaction_list"),
-    path('goal/add/', GoalCreateView.as_view(), name="goal_add"),
-    path('generate-report/', export_transactions, name="export_transactions"),
-    path('goal/edit/<int:pk>/', GoalUpdateView.as_view(), name="goal_edit"),
-    path('goal/delete/<int:pk>/', GoalDeleteView.as_view(), name="goal_delete"),
+    path('login', LoginView.as_view(), name="login"),
+    path('logout', LogoutView.as_view(), name="logout"),
+    path('dashboard', DashboardView.as_view(), name="dashboard"),
+    path('transaction', TransactionView.as_view(), name="transaction"),
+    path('transaction/list', TransactionListView.as_view(), name="transaction_list"),
+    path('goal', GoalView.as_view(), name="goal"),
+    path('generate-report', export_transactions, name="export_transactions"),
+    
 ]

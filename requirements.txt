@@ -6,3 +6,4 @@ django-cors-headers
 pandas
 django-environ
 mysql-connector-python
+django-import-export

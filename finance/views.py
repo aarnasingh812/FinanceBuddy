@@ -1,27 +1,22 @@
-from django.shortcuts import render, redirect, HttpResponse, get_object_or_404
+from django.shortcuts import render, redirect, HttpResponse
 from django.views import View
-from finance.forms import TransactionForm, GoalForm
-from django.contrib.auth import login
-from django.contrib.auth.mixins import LoginRequiredMixin
 from finance.models import Transaction, Goal, User
-from django.db.models import Sum
-from .admin import TransactionResource
-from django.contrib import messages
 from django.utils import timezone
-from django.views.decorators.http import require_POST
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from django.contrib.auth.hashers import check_password
-from .serializers import RegisterSerializer, LoginSerializer, UserSerializer
+
+from serializers.serializers import (
+RegisterSerializer, LoginSerializer, UserSerializer, 
+TransactionCreateSerializer, GoalCreateSerializer, GoalUpdateSerializer, 
+GoalDeleteSerializer, TransactionUpdateSerializer, TransactionDeleteSerializer,
+TransactionSerializer
+)
+
 from helpers.jwt_token_helper import get_tokens_for_user
-from finance.utils.forecasting import ml_forecast_next_month
-from finance.utils.budget_advice import generate_budget_advice
-from finance.utils.optimizer import recommend_saving_for_goal
-
-
-# Create your views here.
+from finance.admin import TransactionResource
+from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
@@ -52,7 +47,7 @@ class LoginView(APIView):
             password = serializer.validated_data['password']
             try:
                 user = User.objects.get(username=username)    
-                if check_password(password, user.password):
+                if user.check_password(password):
                     tokens = get_tokens_for_user(user)
                     user_serializer = UserSerializer(user)
                     return Response({
@@ -66,7 +61,24 @@ class LoginView(APIView):
             except User.DoesNotExist:
                 return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
+
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        try:
+            refresh_token = request.data.get("refresh_token")
+            if not refresh_token:
+                return Response({"error": "refresh_token is required"}, status=status.HTTP_400_BAD_REQUEST)
+                
+            token = RefreshToken(refresh_token)
+            token.blacklist()
+            return Response({"status": "success", "message": "Logout successful"}, status=status.HTTP_205_RESET_CONTENT)
+        except TokenError:
+            return Response({"error": "Invalid or expired token"}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 class DashboardView(APIView):
     permission_classes = (IsAuthenticated,)
     def get(self, request, *args, **kwargs):
@@ -92,171 +104,122 @@ class DashboardView(APIView):
         # Fetch goals
         goals = Goal.objects.filter(user=request.user)
 
-        # Calculate basic financials
-        total_income = transactions.filter(transaction_type='Income').aggregate(total=Sum('amount'))['total'] or 0
-        total_expense = transactions.filter(transaction_type='Expense').aggregate(total=Sum('amount'))['total'] or 0
-        net_savings = total_income - total_expense
+        return Response({
+            "status": "success",
+            "message": "Transactions fetched successfully",
+        }, status=status.HTTP_200_OK)
 
-        # Goal progress calculation (existing logic)
-        remaining_savings = net_savings
-        goal_progress = []
-        for goal in goals:
-            if remaining_savings >= goal.target_amount:
-                progress = 100
-                remaining_savings -= goal.target_amount
-            elif remaining_savings > 0:
-                progress = (remaining_savings / goal.target_amount) * 100
-                remaining_savings = 0
-            else:
-                progress = 0
+                              
+
+class TransactionView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request, *args, **kwargs):
+        serializer = TransactionCreateSerializer(data=request.data, context={'user': request.user})
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "status": "success",
+                "message": "Transaction created successfully",
+                "transaction": serializer.data
+            }, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+    def put(self, request, *args, **kwargs):
+        serializer = TransactionUpdateSerializer(data=request.data)
+        if serializer.is_valid():
+            transaction_id = serializer.validated_data['id']
+            try:
+                transaction = Transaction.objects.get(id=transaction_id, user=request.user)
+            except Transaction.DoesNotExist:
+                return Response({"error": "Transaction not found"}, status=status.HTTP_404_NOT_FOUND)
             
-            goal_progress.append({
-                'goal': goal,
-                'progress': round(progress, 2)
-            })
+            serializer.update(transaction, serializer.validated_data)
+            return Response({
+                "status": "success",
+                "message": "Transaction updated successfully"
+            }, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        # ML Forecasting
-        user_id = request.user.id
-        predicted_income = ml_forecast_next_month(request.user, "Income", method="prophet", user_id=user_id)
-        predicted_expense = ml_forecast_next_month(request.user, "Expense", method="prophet", user_id=user_id)
-        predicted_savings = predicted_income - predicted_expense
+    def delete(self, request, *args, **kwargs):
+        serializer = TransactionDeleteSerializer(data=request.data)
+        if serializer.is_valid():
+            transaction_id = serializer.validated_data['id']
+            try:
+                transaction = Transaction.objects.get(id=transaction_id, user=request.user)
+                transaction.delete()
+                return Response({
+                    "status": "success",
+                    "message": "Transaction deleted successfully"
+                }, status=status.HTTP_200_OK)
+            except Transaction.DoesNotExist:
+                return Response({"error": "Transaction not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+            
+class TransactionListView(APIView):
+    permission_classes = [IsAuthenticated]
 
-        # Personalized Forecast Advice
-        budget_advice = generate_budget_advice(predicted_income, predicted_expense)
-
-        # Goal Optimization Recommendations (NEW FEATURE)
-        goal_recommendations = []
-        for item in goal_progress:
-            goal = item['goal']
-            recommendation = recommend_saving_for_goal(request.user, goal, target_probability=0.80)
-            recommendation.update({
-                "goal_id": goal.id,
-                "goal_name": goal.name,
-                "goal_target": goal.target_amount,
-                "goal_progress": item['progress']
-            })
-            goal_recommendations.append(recommendation)
-
-        # Send all data to template
-        context = {
-            'transactions': transactions,
-            'selected_month': f"{year}-{month:02d}",
-
-            # Key Financials
-            'total_income': round(total_income, 2),
-            'total_expense': round(total_expense, 2),
-            'net_savings': round(net_savings, 2),
-
-            # Goal Progress + Recommendations
-            'goal_progress': goal_progress,
-            'goal_recommendations': goal_recommendations,
-
-            # Forecast + Advice
-            'predicted_income': round(predicted_income, 2),
-            'predicted_expense': round(predicted_expense, 2),
-            'predicted_savings': round(predicted_savings, 2),
-            'budget_advice': budget_advice,
-        }
-
-        return render(request, 'finance/dashboard.html', context)
-
-                       
-
-class TransactionCreateView(LoginRequiredMixin, View): 
     def get(self, request, *args, **kwargs):
-        form=TransactionForm()
-        return render(request, 'finance/transaction_form.html', {'form':form})
-    
+        transactions = Transaction.objects.filter(user=request.user).order_by('-date')
+        
+        month_filter = request.GET.get('month')
+        if month_filter:
+            try:
+                year, month = map(int, month_filter.split('-'))
+                transactions = transactions.filter(date__year=year, date__month=month)
+            except ValueError:
+                return Response({"error": "Invalid format for month filter. Use YYYY-MM"}, status=status.HTTP_400_BAD_REQUEST)
+                
+        serializer = TransactionSerializer(transactions, many=True)
+        return Response({
+            "status": "success",
+            "transactions": serializer.data
+        }, status=status.HTTP_200_OK)
+        
+
+class GoalView(APIView):
+    permission_classes = [IsAuthenticated]
+
     def post(self, request, *args, **kwargs):
-        form = TransactionForm(request.POST)
-        if form.is_valid():
-            transaction = form.save(commit=False)
-            transaction.user = request.user
-            transaction.save()
-            messages.success(request, "Transaction added successfully!")
-            return redirect('dashboard')
+        serializer = GoalCreateSerializer(data=request.data, context={'user': request.user})
+        if serializer.is_valid():
+            serializer.save()
+            return Response({
+                "status": "success",
+                "message": "Goal created successfully",
+                "goal": serializer.data
+            }, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        return render(request, 'finance/transaction_form.html', {'form':form})
+    def put(self, request, *args, **kwargs):
+        serializer = GoalUpdateSerializer(data=request.data)
+        if serializer.is_valid():
+            goal_id = serializer.validated_data['id']
+            try:
+                goal = Goal.objects.get(id=goal_id, user=request.user)
+            except Goal.DoesNotExist:
+                return Response({"error": "Goal not found"}, status=status.HTTP_404_NOT_FOUND)
+            
+            serializer.update(goal, serializer.validated_data)
+            return Response({
+                "status": "success",
+                "message": "Goal updated successfully"
+            }, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
-class TransactionListView(LoginRequiredMixin, View):
-    def get(self, request, *args, **kwargs):
-        transactions = Transaction.objects.filter(user=request.user)
-        return render(request, 'finance/transaction_list.html', {'transactions': transactions})
-    
-
-class GoalCreateView(LoginRequiredMixin, View):
-    def get(self, request, *args, **kwargs):
-        form=GoalForm()
-        return render(request, 'finance/goal_form.html', {'form':form})
-    
-    def post(self, request, *args, **kwargs):
-        form = GoalForm(request.POST)
-        if form.is_valid():
-            goal = form.save(commit=False)
-            goal.user = request.user
-            goal.save()
-            messages.success(request, "Goal added successfully!")
-            return redirect('dashboard')
-
-        return render(request, 'finance/goal_form.html', {'form':form})
-
-    
-
-class GoalUpdateView(LoginRequiredMixin, View):
-    def get(self, request, *args, **kwargs):
-        try:
-            goal = Goal.objects.get(id=kwargs['pk'], user=request.user)
-        except Goal.DoesNotExist:
-            messages.error(request, "Goal not found.")
-            return redirect('dashboard')
-        
-        form = GoalForm(instance=goal)
-        return render(request, 'finance/goalUpdate.html', {
-            'form': form, 
-            'goal': goal, 
-            'is_edit': True
-        })
-    
-    def post(self, request, *args, **kwargs):
-        try:
-            goal = Goal.objects.get(id=kwargs['pk'], user=request.user)
-        except Goal.DoesNotExist:
-            messages.error(request, "Goal not found.")
-            return redirect('dashboard')
-        
-        form = GoalForm(request.POST, instance=goal)
-        if form.is_valid():
-            form.save()  
-            messages.success(request, "Goal updated successfully!")
-            return redirect('dashboard')
-        
-        messages.error(request, "Please correct the errors below.")
-        return render(request, 'finance/goal_form.html', {
-            'form': form, 
-            'goal': goal, 
-            'is_edit': True
-        })
-
-class GoalDeleteView(LoginRequiredMixin, View):
-    def get(self, request, *args, **kwargs):
-        try:
-            goal = Goal.objects.get(id=kwargs['pk'], user=request.user)
-        except Goal.DoesNotExist:
-            messages.error(request, "Goal not found.")
-            return redirect('dashboard')
-        
-        return render(request, 'finance/goal_confirm_delete.html', {'goal': goal})
-    
-    def post(self, request, *args, **kwargs):
-        try:
-            goal = Goal.objects.get(id=kwargs['pk'], user=request.user)
-        except Goal.DoesNotExist:
-            messages.error(request, "Goal not found.")
-            return redirect('dashboard')
-        
-        goal.delete()
-        messages.success(request, "Goal deleted successfully!")
-        return redirect('dashboard')
+    def delete(self, request, *args, **kwargs):
+        serializer = GoalDeleteSerializer(data=request.data)
+        if serializer.is_valid():
+            goal_id = serializer.validated_data['id']
+            try:
+                goal = Goal.objects.get(id=goal_id, user=request.user)
+                goal.delete()
+                return Response({
+                    "status": "success",
+                    "message": "Goal deleted successfully"
+                }, status=status.HTTP_200_OK)
+            except Goal.DoesNotExist:
+                return Response({"error": "Goal not found"}, status=status.HTTP_404_NOT_FOUND)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
 
 

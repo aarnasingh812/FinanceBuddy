@@ -1,4 +1,9 @@
 # Python
-__pycache__/
+finance/__pycache__/
+financeBuddy/__pycache__/
+helpers/__pycache__/
+serializers/__pycache__/
 .env
 env/
+venv/
+finance/migrations/
