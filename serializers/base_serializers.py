@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from finance.models import User, Transaction, Goal
+from finance.models import User, Transaction, Goal, RecurringTransaction
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -80,4 +80,12 @@ class TransactionSerializer(serializers.ModelSerializer):
         model = Transaction
         fields = ('title', 'amount', 'transaction_type', 'date', 'category')
 
-    
+
+class RecurringTransactionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = RecurringTransaction
+        fields = (
+            'id', 'title', 'amount', 'interval_bucket', 'mean_gap_days',
+            'confidence', 'next_expected_date', 'recurring_type',
+            'occurrences', 'last_date', 'is_active',
+        )

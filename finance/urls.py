@@ -1,8 +1,10 @@
 from django.urls import path
-from finance.views.views import (
+from finance.views.base_views import (
     RegisterView, DashboardView, TransactionView, TransactionListView,
-    GoalView, LoginView, LogoutView, BulkTransactionView,
+    GoalView, LoginView, LogoutView, BulkTransactionView
 )
+from finance.views.recurring_txn_view import RecurringTransactionView
+
 
 
 
@@ -15,6 +17,7 @@ urlpatterns = [
     path('transaction/list', TransactionListView.as_view(), name="transaction_list"),
     path('transaction/bulk', BulkTransactionView.as_view(), name="transaction_bulk"),
     path('goal', GoalView.as_view(), name="goal"),
+    path('recurring', RecurringTransactionView.as_view(), name="recurring_transactions"),
    # path('generate-report', export_transactions, name="export_transactions"),
     
 ]

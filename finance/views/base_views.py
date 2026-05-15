@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
-from serializers.serializers import (
+from serializers.base_serializers import (
 RegisterSerializer, LoginSerializer, UserSerializer, 
 TransactionCreateSerializer, GoalCreateSerializer, GoalUpdateSerializer, 
 GoalDeleteSerializer, TransactionUpdateSerializer, TransactionDeleteSerializer,
@@ -18,6 +18,7 @@ from helpers.jwt_token_helper import get_tokens_for_user
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
 
 class RegisterView(APIView):
+    
     permission_classes = [AllowAny]
     def post(self, request):
 
@@ -249,3 +250,5 @@ class BulkTransactionView(APIView):
             return Response({'status': 'success', **data}, status=status.HTTP_201_CREATED)
         else:
             return Response({'status': 'error', **data}, status=status.HTTP_400_BAD_REQUEST)
+
+

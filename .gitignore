@@ -1,9 +1,9 @@
-# Python
-finance/__pycache__/
-financeBuddy/__pycache__/
-helpers/__pycache__/
-serializers/__pycache__/
-views/__pycache__/
+
+# Ignore all __pycache__ folders anywhere in the project
+**/__pycache__/
+*.pyc
+
+# Your other ignores
 .env
 env/
 venv/
