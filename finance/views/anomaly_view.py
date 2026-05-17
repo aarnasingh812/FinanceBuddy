@@ -1,12 +1,12 @@
-
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
-from finance.models import RecurringTransaction, MLResult
+
+from finance.models import AnomalousTransaction, MLResult
 
 
-class RecurringTransactionView(APIView):
+class AnomalyDetectionView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
@@ -14,44 +14,46 @@ class RecurringTransactionView(APIView):
 
         # Read from MLResult (precomputed via POST /ml/compute)
         ml_result = MLResult.objects.filter(
-            user=user, feature='recurring', status=True
+            user=user, feature='anomaly', status=True
         ).first()
 
         if ml_result is None:
             return Response({
                 "status": "success",
                 "message": "No results found. Click 'Analyse' to compute ML features.",
-                "recurring_transactions": None,
+                "anomalies": None,
             }, status=status.HTTP_200_OK)
 
         return Response({
             "status": "success",
             "computed_at": ml_result.computed_at,
-            "recurring_transactions": ml_result.result.get("recurring_transactions"),
+            **ml_result.result,
         }, status=status.HTTP_200_OK)
 
     def put(self, request, *args, **kwargs):
-        recurring_id = request.data.get("id")
-        is_active = request.data.get("is_active")
+        anomaly_id = request.data.get("id")
+        is_dismissed = request.data.get("is_dismissed")
 
-        if recurring_id is None or is_active is None:
+        if anomaly_id is None or is_dismissed is None:
             return Response(
-                {"error": "Both 'id' and 'is_active' fields are required."},
+                {"error": "Both 'id' and 'is_dismissed' fields are required."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
         try:
-            recurring = RecurringTransaction.objects.get(id=recurring_id, user=request.user)
-        except RecurringTransaction.DoesNotExist:
+            anomaly = AnomalousTransaction.objects.get(
+                id=anomaly_id, user=request.user
+            )
+        except AnomalousTransaction.DoesNotExist:
             return Response(
-                {"error": "Recurring transaction not found."},
+                {"error": "Anomalous transaction not found."},
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        recurring.is_active = bool(is_active)
-        recurring.save()
+        anomaly.is_dismissed = bool(is_dismissed)
+        anomaly.save()
 
         return Response({
             "status": "success",
-            "message": f"Recurring transaction {'activated' if recurring.is_active else 'dismissed'} successfully.",
+            "message": f"Anomaly {'dismissed' if anomaly.is_dismissed else 'restored'} successfully.",
         }, status=status.HTTP_200_OK)

@@ -11,7 +11,7 @@ from serializers.base_serializers import (
 RegisterSerializer, LoginSerializer, UserSerializer, 
 TransactionCreateSerializer, GoalCreateSerializer, GoalUpdateSerializer, 
 GoalDeleteSerializer, TransactionUpdateSerializer, TransactionDeleteSerializer,
-TransactionSerializer
+TransactionSerializer, GoalListSerializer
 )
 from helpers.bulk_upload_helper import generate_transaction_template, process_bulk_upload
 from helpers.jwt_token_helper import get_tokens_for_user
@@ -220,6 +220,17 @@ class GoalView(APIView):
             except Goal.DoesNotExist:
                 return Response({"error": "Goal not found"}, status=status.HTTP_404_NOT_FOUND)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class GoalListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        goals = Goal.objects.filter(user=request.user).order_by('deadline')
+        serializer = GoalListSerializer(goals, many=True)
+        return Response({
+            "status": "success",
+            "goals": serializer.data
+        }, status=status.HTTP_200_OK)
 
 
 class BulkTransactionView(APIView):

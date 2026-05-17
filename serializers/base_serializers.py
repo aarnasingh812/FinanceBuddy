@@ -35,6 +35,7 @@ class GoalCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=100)
     target_amount = serializers.DecimalField(decimal_places=2, max_digits=10)
     deadline = serializers.DateField()
+    status = serializers.CharField(max_length=20, required=False)
     
     def create(self, validated_data):
         return Goal.objects.create(user=self.context['user'], **validated_data)
@@ -44,11 +45,12 @@ class GoalUpdateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=100, required=False)
     target_amount = serializers.DecimalField(decimal_places=2, max_digits=10, required=False)
     deadline = serializers.DateField(required=False)
-    
+    status = serializers.CharField(max_length=20, required=False)
     def update(self, instance, validated_data):
         instance.name = validated_data.get('name', instance.name)
         instance.target_amount = validated_data.get('target_amount', instance.target_amount)
         instance.deadline = validated_data.get('deadline', instance.deadline)
+        instance.status = validated_data.get('status', instance.status)
         instance.save()
         return instance
 
@@ -88,4 +90,10 @@ class RecurringTransactionSerializer(serializers.ModelSerializer):
             'id', 'title', 'amount', 'interval_bucket', 'mean_gap_days',
             'confidence', 'next_expected_date', 'recurring_type',
             'occurrences', 'last_date', 'is_active',
-        )
+        )
+
+class GoalListSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Goal
+        fields = ('id', 'name', 'target_amount', 'deadline','status')
+

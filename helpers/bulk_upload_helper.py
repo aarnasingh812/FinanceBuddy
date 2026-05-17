@@ -4,8 +4,9 @@ from datetime import datetime, date
 from io import BytesIO
 from django.http import HttpResponse
 from django.db import transaction as db_transaction
+from finance.models import Transaction
 
-from serializers.serializers import TransactionCreateSerializer
+from serializers.base_serializers import TransactionCreateSerializer
 
 
 # Display name -> DB field name mapping
@@ -163,8 +164,6 @@ def process_bulk_upload(file, user):
         }
 
     # All rows valid — save atomically
-    from finance.models import Transaction
-
     try:
         with db_transaction.atomic():
             created = []

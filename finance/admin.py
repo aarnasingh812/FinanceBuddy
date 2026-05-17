@@ -1,5 +1,5 @@
 from django.contrib import admin
-from finance.models import Transaction, Goal
+from finance.models import Transaction, Goal, AnomalousTransaction, MLResult
 from import_export.admin import ExportMixin
 from import_export import resources
 
@@ -15,5 +15,21 @@ class TransactionAdmin(ExportMixin, admin.ModelAdmin):
     list_display = ('date', 'title', 'amount', 'transaction_type') 
     search_fields = ('title',)
 
+
+class AnomalousTransactionAdmin(admin.ModelAdmin):
+    list_display = ('transaction', 'anomaly_score', 'period', 'is_dismissed', 'detected_at')
+    list_filter = ('period', 'is_dismissed')
+    search_fields = ('transaction__title',)
+
+
+class MLResultAdmin(admin.ModelAdmin):
+    list_display = ('user', 'feature', 'status', 'computed_at')
+    list_filter = ('feature', 'status')
+    search_fields = ('user__username',)
+    readonly_fields = ('result',)
+
+
 admin.site.register(Transaction, TransactionAdmin)
 admin.site.register(Goal)
+admin.site.register(AnomalousTransaction, AnomalousTransactionAdmin)
+admin.site.register(MLResult, MLResultAdmin)
