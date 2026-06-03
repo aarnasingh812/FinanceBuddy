@@ -1,11 +1,15 @@
+import logging
 from collections import defaultdict
 from datetime import date
 from statistics import mean
 
-from finance.models import Transaction, Goal
+from finance.models import Transaction, Goal, User
 from ml_utils.recurring_detector import detect_recurring_transactions
 from ml_utils.anomaly_detector import detect_anomalies
 from ml_utils.goal_forecaster import forecast_goals
+from ml_utils.llm_client import generate_narrative
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -469,6 +473,84 @@ def _build_goal_insights(forecast_data, savings_recs):
 
 
 # ---------------------------------------------------------------------------
+# LLM Context Assembly
+# ---------------------------------------------------------------------------
+
+def _build_llm_context(user_id, cat_stats, overall, savings_recs,
+                       spend_opt, forecast_data, anomaly_data,
+                       recurring_data):
+    """
+    Assemble a structured context dict that feeds the LLM prompt.
+
+    This is the bridge between the rule engine outputs and the LLM —
+    every piece of data the LLM needs is collected here so the prompt
+    builder doesn't touch Django models or ML utilities directly.
+    """
+    # --- User profile ---
+    try:
+        user = User.objects.get(id=user_id)
+        username = user.username
+        account_age_months = (
+            (date.today().year - user.created_at.year) * 12
+            + (date.today().month - user.created_at.month)
+        )
+    except User.DoesNotExist:
+        username = "User"
+        account_age_months = 0
+
+    # --- Anomaly summary (flatten to key info only) ---
+    anomaly_summary = None
+    if anomaly_data and not anomaly_data.get("insufficient_data"):
+        anomaly_summary = {}
+        for period in ("current_month", "last_3_months"):
+            items = anomaly_data.get(period)
+            if items:
+                anomaly_summary[period] = [
+                    {
+                        "title": a.get("title", ""),
+                        "amount": a.get("amount", 0),
+                        "category": a.get("category", ""),
+                        "anomaly_score": a.get("anomaly_score", 0),
+                    }
+                    for a in items
+                ]
+
+    # --- Recurring summary (flatten) ---
+    recurring_summary = None
+    if recurring_data:
+        recurring_summary = []
+        for bucket_key in ("15_days", "30_days", "90_days"):
+            patterns = recurring_data.get(bucket_key)
+            if not patterns:
+                continue
+            for p in patterns:
+                recurring_summary.append({
+                    "title": p.get("title", ""),
+                    "amount": float(p.get("amount", 0)),
+                    "mean_gap_days": p.get("mean_gap_days", 30),
+                    "recurring_type": p.get("recurring_type", "unknown"),
+                })
+
+    # --- Total potential savings ---
+    total_potential = sum(r.get("estimated_monthly_savings", 0) for r in savings_recs)
+
+    return {
+        "user_profile": {
+            "username": username,
+            "account_age_months": account_age_months,
+            "analysis_date": date.today().isoformat(),
+        },
+        "financial_snapshot": overall if overall else {},
+        "savings_recommendations": savings_recs,
+        "total_potential_savings": round(total_potential, 2),
+        "spend_optimization": spend_opt,
+        "goal_forecasts": forecast_data,
+        "anomaly_summary": anomaly_summary,
+        "recurring_summary": recurring_summary,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -526,7 +608,19 @@ def generate_recommendations(user_id: int):
     # 5. Build goal insights
     goal_insights = _build_goal_insights(forecast_data, savings_recs)
 
-    # 6. Assemble response
+    # 6. Generate LLM narrative
+    llm_insights = None
+    try:
+        llm_context = _build_llm_context(
+            user_id, cat_stats, overall, savings_recs,
+            spend_opt, forecast_data, anomaly_data, recurring_data,
+        )
+        llm_insights = generate_narrative(llm_context)
+    except Exception as e:
+        logger.error("LLM narrative generation failed — falling back to rule-based: %s", e)
+        llm_insights = None
+
+    # 7. Assemble response
     return {
         "savings_opportunities": {
             "total_potential_monthly_savings": round(total_potential, 2),
@@ -534,4 +628,5 @@ def generate_recommendations(user_id: int):
         } if savings_recs else None,
         "spend_optimization": spend_opt,
         "goal_insights": goal_insights,
+        "llm_insights": llm_insights,
     }

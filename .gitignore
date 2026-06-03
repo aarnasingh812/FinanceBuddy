@@ -8,3 +8,4 @@
 env/
 venv/
 finance/migrations/
+test_llm_call.py

@@ -13,6 +13,11 @@ from finance.models import Transaction, Goal
 
 MIN_MONTHS_FOR_TREND = 3   # need ≥ 3 months of data for trend analysis
 
+# Scenario multipliers — how much of the standard deviation to add/subtract
+OPTIMISTIC_SIGMA = 1.0     # avg + 1σ  (or trend-boosted)
+PESSIMISTIC_SIGMA = 1.0    # avg − 1σ  (floored at 10 % of avg)
+PESSIMISTIC_FLOOR_PCT = 0.10  # never project below 10 % of avg savings
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -81,6 +86,75 @@ def _add_months(start_date, months):
     month = month % 12 + 1
     day = min(start_date.day, 28)  # safe day
     return date(year, month, day)
+
+
+def _compute_scenario_rates(avg_monthly_savings, savings_std, savings_trend):
+    """
+    Return (optimistic, realistic, pessimistic) monthly savings rates.
+
+    * Optimistic  = avg + 1σ  (boosted further if trend is 'increasing')
+    * Realistic   = avg       (nudged slightly by trend direction)
+    * Pessimistic = avg − 1σ  (floored so it never drops below 10 % of avg)
+    """
+    avg = avg_monthly_savings
+    std = savings_std
+
+    # --- Trend adjustments ---
+    if savings_trend == "increasing":
+        trend_bonus = 0.05   # +5 % on optimistic / realistic
+    elif savings_trend == "decreasing":
+        trend_bonus = -0.05  # −5 % on realistic, extra penalty pessimistic
+    else:
+        trend_bonus = 0.0
+
+    optimistic = avg + OPTIMISTIC_SIGMA * std + avg * max(trend_bonus, 0)
+    realistic = avg + avg * trend_bonus
+    pessimistic = avg - PESSIMISTIC_SIGMA * std + avg * min(trend_bonus, 0)
+
+    # Floor pessimistic so it never goes below 10 % of avg (or 0 if avg ≤ 0)
+    if avg > 0:
+        pessimistic = max(pessimistic, avg * PESSIMISTIC_FLOOR_PCT)
+    else:
+        pessimistic = min(pessimistic, 0.0)
+
+    return (
+        round(optimistic, 2),
+        round(realistic, 2),
+        round(pessimistic, 2),
+    )
+
+
+def _build_projections(remaining_amount, optimistic_rate, realistic_rate,
+                       pessimistic_rate, today):
+    """
+    Build a dict with optimistic / realistic / pessimistic projections.
+    Each projection contains:
+      - monthly_savings_rate
+      - months_to_goal
+      - estimated_completion_date  (ISO string or None)
+    """
+    def _project(rate, label):
+        if rate <= 0 or remaining_amount <= 0:
+            return {
+                "scenario": label,
+                "monthly_savings_rate": round(rate, 2),
+                "months_to_goal": None,
+                "estimated_completion_date": None,
+            }
+        months = ceil(remaining_amount / rate)
+        completion = _add_months(today, months)
+        return {
+            "scenario": label,
+            "monthly_savings_rate": round(rate, 2),
+            "months_to_goal": months,
+            "estimated_completion_date": completion.isoformat(),
+        }
+
+    return [
+        _project(optimistic_rate, "optimistic"),
+        _project(realistic_rate, "realistic"),
+        _project(pessimistic_rate, "pessimistic"),
+    ]
 
 
 def _greedy_allocate(goals_with_requirements, total_budget):
@@ -161,6 +235,11 @@ def forecast_goals(user_id: int):
         savings_std = 0.0
         savings_trend = "stable"
 
+    # Compute the three scenario rates once (shared across all goals)
+    optimistic_rate, realistic_rate, pessimistic_rate = _compute_scenario_rates(
+        avg_monthly_savings, savings_std, savings_trend,
+    )
+
     # Confidence based on savings consistency
     if avg_monthly_savings > 0 and savings_std > 0:
         confidence = round(max(0.0, min(1.0, 1.0 - (savings_std / avg_monthly_savings))), 2)
@@ -235,11 +314,24 @@ def forecast_goals(user_id: int):
                 "predicted_achievement_date": today.isoformat(),
                 "on_track": True,
                 "confidence": 1.0,
+                "projections": [
+                    {"scenario": "optimistic",  "monthly_savings_rate": 0.0,
+                     "months_to_goal": 0, "estimated_completion_date": today.isoformat()},
+                    {"scenario": "realistic",   "monthly_savings_rate": 0.0,
+                     "months_to_goal": 0, "estimated_completion_date": today.isoformat()},
+                    {"scenario": "pessimistic", "monthly_savings_rate": 0.0,
+                     "months_to_goal": 0, "estimated_completion_date": today.isoformat()},
+                ],
             })
             achievable_count += 1
             continue
 
         if g["status"] == "deadline_passed":
+            # Still show projections so the user knows when they *could* finish
+            projections = _build_projections(
+                g["remaining_amount"], optimistic_rate, realistic_rate,
+                pessimistic_rate, today,
+            )
             forecasts.append({
                 **g,
                 "allocated_monthly_savings": 0.0,
@@ -247,6 +339,7 @@ def forecast_goals(user_id: int):
                 "predicted_achievement_date": None,
                 "on_track": False,
                 "confidence": 0.0,
+                "projections": projections,
             })
             continue
 
@@ -286,6 +379,13 @@ def forecast_goals(user_id: int):
             status = "off_track"
 
         g["status"] = status
+
+        # Build three-scenario projections for this goal
+        projections = _build_projections(
+            g["remaining_amount"], optimistic_rate, realistic_rate,
+            pessimistic_rate, today,
+        )
+
         forecasts.append({
             **g,
             "allocated_monthly_savings": allocated,
@@ -293,6 +393,7 @@ def forecast_goals(user_id: int):
             "predicted_achievement_date": predicted_date_str,
             "on_track": on_track,
             "confidence": confidence,
+            "projections": projections,
         })
 
     # Sort forecasts: on_track first, then by progress descending

@@ -35,13 +35,29 @@ class Transaction(models.Model):
         ('Income', 'Income'),
         ('Expense', 'Expense'),
     ]
-    
+    CATEGORIES = [
+        ('Food/Grocery', 'Food/Grocery'),
+        ('Entertainment', 'Entertainment'),
+        ('EMIs', 'EMIs'),
+        ('Health', 'Health'),
+        ('Education', 'Education'),
+        ('Travel', 'Travel'),
+        ('Personal Expenses', 'Personal Expenses'),
+        ('Investment/SIPs', 'Investment/SIPs'),
+        ('Salary', 'Salary'),
+        ('Rentals', 'Rentals'),
+        ('Utilities/Bills', 'Utilities/Bills'),
+        ('Incentives/Bonus', 'Incentives/Bonus'),
+        ('Other', 'Other'),
+    ]
+
+
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     title = models.CharField(max_length=255)
     amount = models.DecimalField(max_digits=10, decimal_places=2)
     transaction_type = models.CharField(max_length=10, choices=TRANSACTION_TYPES)
     date = models.DateField()
-    category = models.CharField(max_length=255)
+    category = models.CharField(max_length=100, choices=CATEGORIES)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

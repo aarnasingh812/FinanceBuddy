@@ -166,4 +166,9 @@ LOGOUT_REDIRECT_URL = 'login'
 # CELERY_BROKER_URL = "redis://localhost:6379/0"
 # CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
-
+# ---------------------------------------------------------------------------
+# LLM (Groq — Qwen 3-32B) — powers personalised recommendation narratives
+# ---------------------------------------------------------------------------
+GROQ_API_KEY = env("GROQ_API_KEY", default="")
+GROQ_MODEL = "qwen/qwen3-32b"
+GROQ_TEMPERATURE = float(env("GROQ_TEMPERATURE", default=0.6))

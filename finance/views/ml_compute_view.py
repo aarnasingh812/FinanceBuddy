@@ -12,11 +12,6 @@ from ml_utils.recommendation_engine import generate_recommendations
 
 
 class MLComputeView(APIView):
-    """
-    POST /ml/compute
-    Triggers recomputation of all 4 ML features for the authenticated user.
-    Soft-deletes old results (status=False) and stores new ones (status=True).
-    """
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
