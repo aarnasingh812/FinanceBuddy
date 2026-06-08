@@ -4,6 +4,11 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 
 from finance.models import AnomalousTransaction, MLResult
+from serializers.anomaly_serializers import (
+    AnomalyResponseSerializer,
+    AnomalyUpdateSerializer,
+    AnomalyUpdateResponseSerializer,
+)
 
 
 class AnomalyDetectionView(APIView):
@@ -18,27 +23,31 @@ class AnomalyDetectionView(APIView):
         ).first()
 
         if ml_result is None:
-            return Response({
+            response_data = {
                 "status": "success",
                 "message": "No results found. Click 'Analyse' to compute ML features.",
+                "computed_at": None,
                 "anomalies": None,
-            }, status=status.HTTP_200_OK)
+            }
+        else:
+            response_data = {
+                "status": "success",
+                "computed_at": ml_result.computed_at,
+                "anomalies": ml_result.result.get("anomalies"),
+            }
 
-        return Response({
-            "status": "success",
-            "computed_at": ml_result.computed_at,
-            **ml_result.result,
-        }, status=status.HTTP_200_OK)
+        return Response(
+            AnomalyResponseSerializer(response_data).data,
+            status=status.HTTP_200_OK,
+        )
 
     def put(self, request, *args, **kwargs):
-        anomaly_id = request.data.get("id")
-        is_dismissed = request.data.get("is_dismissed")
+        serializer = AnomalyUpdateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-        if anomaly_id is None or is_dismissed is None:
-            return Response(
-                {"error": "Both 'id' and 'is_dismissed' fields are required."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        anomaly_id = serializer.validated_data["id"]
+        is_dismissed = serializer.validated_data["is_dismissed"]
 
         try:
             anomaly = AnomalousTransaction.objects.get(
@@ -53,7 +62,11 @@ class AnomalyDetectionView(APIView):
         anomaly.is_dismissed = bool(is_dismissed)
         anomaly.save()
 
-        return Response({
+        response_data = {
             "status": "success",
             "message": f"Anomaly {'dismissed' if anomaly.is_dismissed else 'restored'} successfully.",
-        }, status=status.HTTP_200_OK)
+        }
+        return Response(
+            AnomalyUpdateResponseSerializer(response_data).data,
+            status=status.HTTP_200_OK,
+        )

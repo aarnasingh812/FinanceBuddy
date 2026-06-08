@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 
 from finance.models import MLResult
+from serializers.forecast_serializers import GoalForecastResponseSerializer
 
 
 class GoalForecastView(APIView):
@@ -18,16 +19,22 @@ class GoalForecastView(APIView):
         ).first()
 
         if ml_result is None:
-            return Response({
+            response_data = {
                 "status": "success",
                 "message": "No results found. Click 'Analyse' to compute ML features.",
+                "computed_at": None,
                 "savings_summary": None,
                 "allocation_plan": None,
                 "forecasts": None,
-            }, status=status.HTTP_200_OK)
+            }
+        else:
+            response_data = {
+                "status": "success",
+                "computed_at": ml_result.computed_at,
+                **ml_result.result,
+            }
 
-        return Response({
-            "status": "success",
-            "computed_at": ml_result.computed_at,
-            **ml_result.result,
-        }, status=status.HTTP_200_OK)
+        return Response(
+            GoalForecastResponseSerializer(response_data).data,
+            status=status.HTTP_200_OK,
+        )

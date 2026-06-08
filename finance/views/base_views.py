@@ -1,18 +1,16 @@
-from django.shortcuts import render, redirect, HttpResponse
-from django.views import View
 from finance.models import Transaction, Goal, User
-from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
 from serializers.base_serializers import (
-RegisterSerializer, LoginSerializer, UserSerializer, 
-TransactionCreateSerializer, GoalCreateSerializer, GoalUpdateSerializer, 
-GoalDeleteSerializer, TransactionUpdateSerializer, TransactionDeleteSerializer,
-TransactionSerializer, GoalListSerializer
+    RegisterSerializer, LoginSerializer, UserSerializer,
+    TransactionCreateSerializer, GoalCreateSerializer, GoalUpdateSerializer,
+    GoalDeleteSerializer, TransactionUpdateSerializer, TransactionDeleteSerializer,
+    TransactionSerializer, GoalListSerializer,
 )
+from serializers.auth_serializers import LogoutRequestSerializer, LogoutResponseSerializer
 from helpers.bulk_upload_helper import generate_transaction_template, process_bulk_upload
 from helpers.jwt_token_helper import get_tokens_for_user
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
@@ -66,49 +64,22 @@ class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        serializer = LogoutRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
         try:
-            refresh_token = request.data.get("refresh_token")
-            if not refresh_token:
-                return Response({"error": "refresh_token is required"}, status=status.HTTP_400_BAD_REQUEST)
-                
-            token = RefreshToken(refresh_token)
+            token = RefreshToken(serializer.validated_data["refresh_token"])
             token.blacklist()
-            return Response({"status": "success", "message": "Logout successful"}, status=status.HTTP_205_RESET_CONTENT)
+            response_data = {"status": "success", "message": "Logout successful"}
+            return Response(
+                LogoutResponseSerializer(response_data).data,
+                status=status.HTTP_205_RESET_CONTENT,
+            )
         except TokenError:
             return Response({"error": "Invalid or expired token"}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-class DashboardView(APIView):
-    permission_classes = (IsAuthenticated,)
-    def get(self, request, *args, **kwargs):
-        user = request.user
-        user_serializer = UserSerializer(user)
-        today = timezone.now()
-
-        # Month Filter
-        month_year = request.GET.get("month_year")
-        if month_year:
-            year, month = map(int, month_year.split("-"))
-        else:
-            year = today.year
-            month = today.month
-
-        # Filter transactions for selected month
-        transactions = Transaction.objects.filter(
-            user=request.user,
-            date__year=year,
-            date__month=month
-        )
-
-        # Fetch goals
-        goals = Goal.objects.filter(user=request.user)
-
-        return Response({
-            "status": "success",
-            "message": "Transactions fetched successfully",
-        }, status=status.HTTP_200_OK)
-
                               
 
 class TransactionView(APIView):

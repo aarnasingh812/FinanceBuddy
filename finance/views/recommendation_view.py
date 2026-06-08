@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 
 from finance.models import MLResult
+from serializers.recommendation_serializers import RecommendationResponseSerializer
 
 
 class RecommendationView(APIView):
@@ -18,16 +19,23 @@ class RecommendationView(APIView):
         ).first()
 
         if ml_result is None:
-            return Response({
+            response_data = {
                 "status": "success",
                 "message": "No results found. Click 'Analyse' to compute ML features.",
+                "computed_at": None,
                 "savings_opportunities": None,
                 "spend_optimization": None,
                 "goal_insights": None,
-            }, status=status.HTTP_200_OK)
+                "llm_insights": None,
+            }
+        else:
+            response_data = {
+                "status": "success",
+                "computed_at": ml_result.computed_at,
+                **ml_result.result,
+            }
 
-        return Response({
-            "status": "success",
-            "computed_at": ml_result.computed_at,
-            **ml_result.result,
-        }, status=status.HTTP_200_OK)
+        return Response(
+            RecommendationResponseSerializer(response_data).data,
+            status=status.HTTP_200_OK,
+        )

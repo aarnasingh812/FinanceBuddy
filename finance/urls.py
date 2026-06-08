@@ -1,13 +1,16 @@
 from django.urls import path
 from finance.views.base_views import (
-    RegisterView, DashboardView, TransactionView, TransactionListView,
-    GoalView, GoalListView, LoginView, LogoutView, BulkTransactionView
+    RegisterView, TransactionView, TransactionListView,
+    GoalView, GoalListView, LoginView, LogoutView, BulkTransactionView,
 )
+from finance.views.dashboard_view import DashboardView
 from finance.views.recurring_txn_view import RecurringTransactionView
 from finance.views.anomaly_view import AnomalyDetectionView
 from finance.views.goal_forecast_view import GoalForecastView
 from finance.views.recommendation_view import RecommendationView
 from finance.views.ml_compute_view import MLComputeView
+from finance.views.ml_compute_status_view import MLComputeStatusView
+
 
 
 
@@ -27,6 +30,7 @@ urlpatterns = [
     path('goal/forecast', GoalForecastView.as_view(), name="goal_forecast"),
     path('recommendations', RecommendationView.as_view(), name="recommendations"),
     path('ml/compute', MLComputeView.as_view(), name="ml_compute"),
+    path('ml/compute/status/<str:task_id>', MLComputeStatusView.as_view(), name="ml_compute_status"),
    # path('generate-report', export_transactions, name="export_transactions"),
     
 ]

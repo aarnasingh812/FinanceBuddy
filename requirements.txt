@@ -11,3 +11,6 @@ openpyxl
 scikit-learn
 numpy
 groq
+celery
+redis
+django-celery-results

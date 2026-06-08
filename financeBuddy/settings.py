@@ -43,11 +43,22 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'finance',
     'import_export',
-    #'django_celery_beat',
+    'django_celery_results',
     'rest_framework',
     'rest_framework_simplejwt',
     'rest_framework_simplejwt.token_blacklist',
 ]
+
+# ---------------------------------------------------------------------------
+# Celery — async task queue for ML computation
+# ---------------------------------------------------------------------------
+CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = "django-db"
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = "UTC"
+CELERY_TASK_TRACK_STARTED = True          # enables the STARTED state
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -162,9 +173,6 @@ AUTH_USER_MODEL = 'finance.User'
 
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = 'login'
-
-# CELERY_BROKER_URL = "redis://localhost:6379/0"
-# CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 
 # ---------------------------------------------------------------------------
 # LLM (Groq — Qwen 3-32B) — powers personalised recommendation narratives

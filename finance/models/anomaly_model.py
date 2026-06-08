@@ -14,7 +14,7 @@ class AnomalousTransaction(models.Model):
     transaction = models.ForeignKey(Transaction, on_delete=models.CASCADE, related_name='anomaly_flags')
     anomaly_score = models.FloatField()        # 0.0 – 1.0
     signals = models.JSONField()               # list of {signal, detail, score}
-    period = models.CharField(max_length=18, choices=PERIOD_CHOICES)
+    period = models.CharField(max_length=50, choices=PERIOD_CHOICES)
     is_dismissed = models.BooleanField(default=False)
     detected_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
