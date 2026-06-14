@@ -52,4 +52,20 @@ class DashboardResponseSerializer(serializers.Serializer):
     user = DashboardUserSerializer(read_only=True)
     transactions = DashboardTransactionSerializer(many=True, read_only=True)
     goals = DashboardGoalSerializer(many=True, read_only=True)
-    summary = serializers.DictField(read_only=True, help_text="total_income, total_expense, net_savings.")
+    summary = serializers.DictField(
+        read_only=True,
+        help_text=(
+            "total_income, total_expense, net_savings, "
+            "income_change_pct, expense_change_pct, savings_change_pct "
+            "(% change vs previous month; null when both months have no data)."
+        ),
+    )
+    chart_data = serializers.DictField(
+        read_only=True,
+        help_text=(
+            "Time-series data for line graphs. Keys: '1m' (weekly, current month), "
+            "'3m' (monthly, last 3 months), '6m' (monthly, last 6 months). "
+            "Each value: {labels: [...], expense: [...], savings: [...]}."
+        ),
+    )
+
