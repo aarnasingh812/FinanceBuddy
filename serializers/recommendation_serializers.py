@@ -1,0 +1,134 @@
+from rest_framework import serializers
+
+
+# ---------------------------------------------------------------------------
+# Savings Opportunities
+# ---------------------------------------------------------------------------
+
+class SavingsRecommendationItemSerializer(serializers.Serializer):
+    """Serializes a single savings recommendation."""
+    type = serializers.CharField(read_only=True)
+    title = serializers.CharField(read_only=True)
+    detail = serializers.CharField(read_only=True)
+    estimated_monthly_savings = serializers.FloatField(read_only=True)
+    priority = serializers.CharField(read_only=True)
+
+
+class SavingsOpportunitiesSerializer(serializers.Serializer):
+    """Serializes the savings_opportunities section."""
+    total_potential_monthly_savings = serializers.FloatField(read_only=True)
+    recommendations = SavingsRecommendationItemSerializer(
+        many=True, read_only=True, allow_null=True
+    )
+
+
+# ---------------------------------------------------------------------------
+# Spend Optimization
+# ---------------------------------------------------------------------------
+
+class SpendCategorySerializer(serializers.Serializer):
+    """Serializes a top spending category."""
+    category = serializers.CharField(read_only=True)
+    avg_monthly_spend = serializers.FloatField(read_only=True)
+    current_month_spend = serializers.FloatField(read_only=True)
+    month_over_month_change_percent = serializers.FloatField(read_only=True)
+    trend = serializers.CharField(read_only=True)
+
+
+class RisingSpendCategorySerializer(serializers.Serializer):
+    """Serializes a rising spend category."""
+    category = serializers.CharField(read_only=True)
+    avg_monthly = serializers.FloatField(read_only=True)
+    current_month = serializers.FloatField(read_only=True)
+
+
+class SpendOptimizationSerializer(serializers.Serializer):
+    """Serializes the spend_optimization section."""
+    monthly_expense_avg = serializers.FloatField(read_only=True)
+    current_month_expense = serializers.FloatField(read_only=True)
+    monthly_income_avg = serializers.FloatField(read_only=True)
+    top_categories = SpendCategorySerializer(many=True, read_only=True, allow_null=True)
+    rising_spend_categories = RisingSpendCategorySerializer(
+        many=True, read_only=True, allow_null=True
+    )
+
+
+# ---------------------------------------------------------------------------
+# Goal Insights
+# ---------------------------------------------------------------------------
+
+class GoalInsightItemSerializer(serializers.Serializer):
+    """Serializes a single goal insight entry."""
+    goal_id = serializers.IntegerField(read_only=True, allow_null=True)
+    goal_name = serializers.CharField(read_only=True)
+    status = serializers.CharField(read_only=True)
+    progress_percent = serializers.FloatField(read_only=True, allow_null=True)
+    insight = serializers.CharField(read_only=True)
+    action_items = serializers.ListField(
+        child=serializers.CharField(), read_only=True, allow_null=True
+    )
+    extra_time_needed_months = serializers.IntegerField(read_only=True, allow_null=True)
+
+
+# ---------------------------------------------------------------------------
+# LLM Insights
+# ---------------------------------------------------------------------------
+
+class LLMPersonalizedTipSerializer(serializers.Serializer):
+    """Serializes a single personalized tip from LLM savings narrative."""
+    rec_index = serializers.IntegerField(read_only=True)
+    personalized_detail = serializers.CharField(read_only=True)
+    motivation = serializers.CharField(read_only=True)
+
+
+class LLMSavingsNarrativeSerializer(serializers.Serializer):
+    """Serializes the LLM savings narrative section."""
+    headline = serializers.CharField(read_only=True)
+    personalized_tips = LLMPersonalizedTipSerializer(many=True, read_only=True)
+    coaching_note = serializers.CharField(read_only=True)
+
+
+class LLMCategoryInsightSerializer(serializers.Serializer):
+    """Serializes a single category insight from the LLM spend narrative."""
+    category = serializers.CharField(read_only=True)
+    narrative = serializers.CharField(read_only=True)
+
+
+class LLMSpendNarrativeSerializer(serializers.Serializer):
+    """Serializes the LLM spend narrative section."""
+    headline = serializers.CharField(read_only=True)
+    category_insights = LLMCategoryInsightSerializer(many=True, read_only=True)
+    trend_alert = serializers.CharField(read_only=True)
+
+
+class LLMGoalNarrativeSerializer(serializers.Serializer):
+    """Serializes a single goal narrative from the LLM output."""
+    goal_id = serializers.IntegerField(read_only=True)
+    personalized_insight = serializers.CharField(read_only=True)
+    action_plan = serializers.ListField(child=serializers.CharField(), read_only=True)
+    encouragement = serializers.CharField(read_only=True)
+
+
+class LLMInsightsSerializer(serializers.Serializer):
+    """Serializes the full llm_insights section generated by the Groq LLM."""
+    overall_summary = serializers.CharField(read_only=True)
+    savings_narrative = LLMSavingsNarrativeSerializer(read_only=True)
+    spend_narrative = LLMSpendNarrativeSerializer(read_only=True)
+    goal_narratives = LLMGoalNarrativeSerializer(many=True, read_only=True)
+    model_used = serializers.CharField(read_only=True)
+    generated_at = serializers.CharField(read_only=True)
+
+
+# ---------------------------------------------------------------------------
+# Full Response
+# ---------------------------------------------------------------------------
+
+class RecommendationResponseSerializer(serializers.Serializer):
+    """Serializes the full response for GET /recommendations."""
+    status = serializers.CharField(read_only=True)
+    computed_at = serializers.DateTimeField(read_only=True, allow_null=True, required=False)
+    message = serializers.CharField(read_only=True, required=False)
+    savings_opportunities = SavingsOpportunitiesSerializer(read_only=True, allow_null=True)
+    spend_optimization = SpendOptimizationSerializer(read_only=True, allow_null=True)
+    goal_insights = GoalInsightItemSerializer(many=True, read_only=True, allow_null=True)
+    llm_insights = LLMInsightsSerializer(read_only=True, allow_null=True)

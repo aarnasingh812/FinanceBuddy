@@ -11,11 +11,15 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+import environ
 
+
+env = environ.Env(DB_CONNECTION=(bool, False))
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-
+environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
@@ -25,7 +29,7 @@ SECRET_KEY = 'django-insecure-589bp*1vbzw6+0i@9z+j^n%6n278x+wg7(65teio=hw3mnp_qr
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
@@ -39,8 +43,22 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'finance',
     'import_export',
-    'django_celery_beat',
+    'django_celery_results',
+    'rest_framework',
+    'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
 ]
+
+# ---------------------------------------------------------------------------
+# Celery — async task queue for ML computation
+# ---------------------------------------------------------------------------
+CELERY_BROKER_URL = env("CELERY_BROKER_URL", default="redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = "django-db"
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = "UTC"
+CELERY_TASK_TRACK_STARTED = True          # enables the STARTED state
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -51,6 +69,23 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+from datetime import timedelta
+
+REST_FRAMEWORK = {
+    
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    )    
+}
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(days=1),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': False,
+    'BLACKLIST_AFTER_ROTATION': True,
+}
 
 ROOT_URLCONF = 'financeBuddy.urls'
 
@@ -71,16 +106,26 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'financeBuddy.wsgi.application'
 
-
-# Database
-# https://docs.djangoproject.com/en/5.2/ref/settings/#databases
+DB_ENGINE=env("DB_ENGINE")
+DB_NAME=env("DB_NAME")
+DB_PASSWORD=env("DB_PASSWORD")
+DB_USER=env("DB_USER")
+DB_HOST=env("DB_HOST")
+DB_PORT=env("DB_PORT")
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
-    }
+   'default': {
+       'ENGINE': DB_ENGINE,
+       'NAME': DB_NAME,
+       'USER': DB_USER,
+       'PASSWORD': DB_PASSWORD,
+       'HOST': DB_HOST,
+       'PORT': DB_PORT,
+       'CHARSET': 'utf8',
+       'COLLATION': 'utf8_general_ci',
+   }
 }
+DB_CONNECTION=env.bool("DB_CONNECTION")
 
 
 # Password validation
@@ -124,10 +169,14 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+AUTH_USER_MODEL = 'finance.User'
+
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = 'login'
 
-CELERY_BROKER_URL = "redis://localhost:6379/0"
-CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
-
-
+# ---------------------------------------------------------------------------
+# LLM (Groq — Qwen 3-32B) — powers personalised recommendation narratives
+# ---------------------------------------------------------------------------
+GROQ_API_KEY = env("GROQ_API_KEY", default="")
+GROQ_MODEL = "qwen/qwen3-32b"
+GROQ_TEMPERATURE = float(env("GROQ_TEMPERATURE", default=0.6))

@@ -1,0 +1,16 @@
+djangorestframework-simplejwt
+django
+djangorestframework
+mysqlclient
+django-cors-headers
+pandas
+django-environ
+mysql-connector-python
+django-import-export
+openpyxl
+scikit-learn
+numpy
+groq
+celery
+redis
+django-celery-results
