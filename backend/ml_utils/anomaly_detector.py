@@ -1,20 +1,3 @@
-"""
-anomaly_detector.py
-====================
-Hybrid financial anomaly detector combining:
-
-  Rule-based signals  (always active, from 5+ transactions)
-    1. Z-Score per category
-    2. Category single-txn spike vs monthly avg
-    3. Suspicious repeat detection (sliding window)
-    4. Daily spend spike
-    5. Category monthly total spike vs prior 3-5 months
-    6. Income spike vs prior monthly income
-
-  ML signal  (activates at ML_MIN_SAMPLES = 30 transactions)
-    7. Local Outlier Factor (LOF)
-
-"""
 
 from collections import defaultdict
 from datetime import date, timedelta
@@ -56,29 +39,7 @@ LOF_CONTAMINATION      = 0.05 # expected fraction of outliers (5%)
 # ===========================================================================
 
 def _build_feature_matrix(transactions):
-    """
-    Convert a list of transaction dicts into a numpy feature matrix.
-
-    Features (7 total):
-        0  amount                   — raw transaction amount
-        1  day_of_week              — 0=Mon … 6=Sun
-        2  day_of_month             — 1-31
-        3  category_encoded         — integer label for category string
-        4  days_since_last_txn      — calendar days since the previous transaction
-                                      (0 for the very first transaction)
-        5  amount_vs_cat_mean_ratio — amount / mean(amount) for that category;
-                                      normalises scale differences across categories
-        6  monthly_spend_so_far     — cumulative spend in this calendar month up to
-                                      and including this transaction
-
-    Transactions are sorted by date before processing so that features 4 and 6
-    are computed in chronological order.
-
-    Returns
-        X       : np.ndarray shape (n, 7), float64
-        cat_le  : fitted LabelEncoder (category strings -> integers)
-        txn_ids : list[int]  transaction IDs in the same row order as X
-    """
+   
     if not transactions:
         return None, None, []
 
@@ -134,22 +95,6 @@ def _lof_signals(transactions):
     """
     Run Local Outlier Factor over all expense transactions.
 
-    Strategy
-    --------
-    For each category with >= LOF_MIN_CAT_SAMPLES transactions, run LOF
-    independently within that category. This gives finer sensitivity — a
-    ₹15,000 restaurant charge is judged against your restaurant history only,
-    not your rent or grocery spend.
-
-    Transactions in categories with fewer samples are pooled together and run
-    through a single global LOF pass, which still provides multi-feature
-    outlier detection without the per-category noise.
-
-    Returns
-    -------
-    dict: { txn_id -> (score: float, detail: str) }
-        Only transactions flagged as outliers (LOF label == -1) are included.
-        score is normalised to [0, 1] where 1 = most anomalous.
     """
     if not transactions or len(transactions) < ML_MIN_SAMPLES:
         return {}
@@ -176,18 +121,7 @@ def _lof_signals(transactions):
 
 
 def _run_lof(txn_subset, scope: str):
-    """
-    Fit LOF on a transaction subset and return flagged outliers.
-
-    Parameters
-    ----------
-    txn_subset : list of transaction dicts
-    scope      : human-readable string used in the detail message
-
-    Returns
-    -------
-    dict: { txn_id -> (score: float, detail: str) }
-    """
+   
     X, _, txn_ids = _build_feature_matrix(txn_subset)
     if X is None:
         return {}

@@ -3,7 +3,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
-
+from django.utils import timezone
 from serializers.base_serializers import (
     RegisterSerializer, LoginSerializer, UserSerializer,
     TransactionCreateSerializer, GoalCreateSerializer, GoalUpdateSerializer,
@@ -130,20 +130,47 @@ class TransactionListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, *args, **kwargs):
+
         transactions = Transaction.objects.filter(user=request.user).order_by('-date')
-        
-        month_filter = request.GET.get('month')
-        if month_filter:
+        month_param = request.GET.get('month')  # YYYY-MM
+        year_param  = request.GET.get('year')   # YYYY
+
+        if month_param:
+            # Filter by specific month and year, e.g. ?month=2026-06
             try:
-                year, month = map(int, month_filter.split('-'))
+                year, month = map(int, month_param.split('-'))
+                if not (1 <= month <= 12):
+                    raise ValueError
                 transactions = transactions.filter(date__year=year, date__month=month)
             except ValueError:
-                return Response({"error": "Invalid format for month filter. Use YYYY-MM"}, status=status.HTTP_400_BAD_REQUEST)
-                
+                return Response(
+                    {"error": "Invalid format for 'month' parameter. Use YYYY-MM (e.g. 2026-06)."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        elif year_param:
+            # Filter by entire year, e.g. ?year=2026
+            try:
+                year = int(year_param)
+                transactions = transactions.filter(date__year=year)
+            except ValueError:
+                return Response(
+                    {"error": "Invalid format for 'year' parameter. Use YYYY (e.g. 2026)."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+        else:
+            # Default: show current month's transactions
+            now = timezone.now()
+            transactions = transactions.filter(date__year=now.year, date__month=now.month)
+
         serializer = TransactionSerializer(transactions, many=True)
         return Response({
             "status": "success",
-            "transactions": serializer.data
+            "transactions": serializer.data,
+            "filter_applied": {
+                "month": month_param or None,
+                "year": year_param or None,
+                "default": not month_param and not year_param,
+            }
         }, status=status.HTTP_200_OK)
         
 
@@ -198,9 +225,36 @@ class GoalListView(APIView):
     def get(self, request, *args, **kwargs):
         goals = Goal.objects.filter(user=request.user).order_by('deadline')
         serializer = GoalListSerializer(goals, many=True)
+
+        # Compute total savings (all-time income − expense)
+        from django.db.models import Sum, Q, DecimalField
+        from django.db.models.functions import Coalesce
+
+        totals = Transaction.objects.filter(user=request.user).aggregate(
+            total_income=Coalesce(
+                Sum('amount', filter=Q(transaction_type='Income')),
+                0, output_field=DecimalField()
+            ),
+            total_expense=Coalesce(
+                Sum('amount', filter=Q(transaction_type='Expense')),
+                0, output_field=DecimalField()
+            ),
+        )
+        total_savings = float(totals['total_income'] - totals['total_expense'])
+
+        # Sum of target amounts for current goals
+        current_goals = Goal.objects.filter(user=request.user, status='current')
+        total_target = float(
+            current_goals.aggregate(
+                total=Coalesce(Sum('target_amount'), 0, output_field=DecimalField())
+            )['total']
+        )
+
         return Response({
             "status": "success",
-            "goals": serializer.data
+            "goals": serializer.data,
+            "total_savings": total_savings,
+            "total_target": total_target,
         }, status=status.HTTP_200_OK)
 
 

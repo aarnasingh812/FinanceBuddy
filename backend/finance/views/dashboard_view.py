@@ -12,9 +12,7 @@ from finance.models import Transaction, Goal
 from serializers.dashboard_serializers import (
     DashboardQuerySerializer,
     DashboardTransactionSerializer,
-    DashboardGoalSerializer,
-    DashboardUserSerializer,
-    DashboardResponseSerializer,
+    DashboardGoalSerializer
 )
 
 
@@ -177,6 +175,20 @@ class DashboardView(APIView):
         }
 
         # ----------------------------------------------------------------
+        # Spending breakdown by category — current month
+        # ----------------------------------------------------------------
+        category_totals = defaultdict(Decimal)
+        for t in current_txns:
+            if t.transaction_type == "Expense":
+                category_totals[t.category] += t.amount
+
+        spending_breakdown = sorted(
+            [{"category": cat, "amount": float(amt)} for cat, amt in category_totals.items()],
+            key=lambda x: x["amount"],
+            reverse=True,
+        )
+
+        # ----------------------------------------------------------------
         # Fetch active goals
         # ----------------------------------------------------------------
         goals = Goal.objects.filter(user=request.user, status="current")
@@ -193,8 +205,9 @@ class DashboardView(APIView):
                 "username": request.user.username,
                 "email":    request.user.email,
             },
-            "summary":      summary,
-            "chart_data":   chart_data,
+            "summary":            summary,
+            "chart_data":         chart_data,
+            "spending_breakdown": spending_breakdown,
             "transactions": DashboardTransactionSerializer(current_txns, many=True).data,
             "goals":        DashboardGoalSerializer(goals, many=True).data,
         }

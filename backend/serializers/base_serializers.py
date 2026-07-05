@@ -80,7 +80,7 @@ class TransactionDeleteSerializer(serializers.Serializer):
 class TransactionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Transaction
-        fields = ('title', 'amount', 'transaction_type', 'date', 'category')
+        fields = ('id', 'title', 'amount', 'transaction_type', 'date', 'category')
 
 
 class RecurringTransactionSerializer(serializers.ModelSerializer):

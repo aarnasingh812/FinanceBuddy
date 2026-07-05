@@ -25,7 +25,7 @@ class RecurringTransactionView(APIView):
         if ml_result is None:
             response_data = {
                 "status": "success",
-                "message": "No results found. Click 'Analyse' to compute ML features.",
+                "message": "No results found. Click 'Refresh' on the Insights page to compute ML features.",
                 "computed_at": None,
                 "recurring_transactions": None,
             }
