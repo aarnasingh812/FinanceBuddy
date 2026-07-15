@@ -1,7 +1,17 @@
+"""
+Transaction anomaly detection.
+
+Combines simple statistical/rule-based checks with an optional
+Local Outlier Factor (LOF) pass to flag suspicious expense and income
+transactions for a user.
+
+Public API: detect_anomalies(user_id) -> dict
+"""
 
 from collections import defaultdict
 from datetime import date, timedelta
 from statistics import mean, stdev
+from typing import Callable
 
 import numpy as np
 from sklearn.neighbors import LocalOutlierFactor
@@ -27,11 +37,62 @@ INCOME_SPIKE_MULTIPLIER   = 2.0  # flag if single income txn > 2x prior monthly 
 # ---------------------------------------------------------------------------
 # LOF constants
 # ---------------------------------------------------------------------------
-ML_MIN_SAMPLES         = 30   # minimum total transactions to activate LOF
-LOF_MIN_CAT_SAMPLES    = 15   # minimum per-category samples to run per-category LOF;
-                               # categories below this are pooled into a global pass
-LOF_N_NEIGHBORS        = 10   # k for LOF; reduced to work on smaller personal datasets
-LOF_CONTAMINATION      = 0.05 # expected fraction of outliers (5%)
+ML_MIN_SAMPLES      = 30   # minimum total transactions to activate LOF
+LOF_MIN_CAT_SAMPLES = 15   # minimum per-category samples to run per-category LOF;
+                            # categories below this are pooled into a global pass
+LOF_N_NEIGHBORS     = 10   # k for LOF; reduced to work on smaller personal datasets
+LOF_CONTAMINATION   = 0.05 # expected fraction of outliers (5%)
+
+
+# ===========================================================================
+# Small shared helpers
+# ===========================================================================
+
+def _month_key(d: date) -> tuple:
+    """(year, month) key used to bucket transactions by calendar month."""
+    return (d.year, d.month)
+
+
+def _shift_month_start(d: date, months: int) -> date:
+    """First day of the month that is `months` away from d's month.
+
+    `months` may be negative (go back in time) or positive (go forward).
+    """
+    absolute_month = d.year * 12 + (d.month - 1) + months
+    year, month = divmod(absolute_month, 12)
+    return date(year, month + 1, 1)
+
+
+def _ratio_signal(ratio: float, threshold: float, score_scale: float,
+                   build_detail: Callable[[], str]):
+    """Shared "is this ratio over the threshold" check used by several signals.
+
+    Returns (triggered, score, detail) exactly like the individual signal
+    functions did before refactoring.
+    """
+    if ratio <= threshold:
+        return False, 0.0, ""
+    score = min(1.0, ratio / score_scale)
+    return True, round(score, 2), build_detail()
+
+
+def _recent_month_baseline(monthly_totals: dict, before_month_key: tuple):
+    """Average of the most recent prior months, capped at MONTHLY_HISTORY_MAX.
+
+    Returns (baseline_avg, months_used) or (None, 0) if there isn't enough
+    history (MONTHLY_HISTORY_MIN prior months) to compute one.
+    """
+    prior_months = sorted(
+        (ym, total) for ym, total in monthly_totals.items() if ym < before_month_key
+    )
+    prior_months.reverse()  # most recent first
+
+    if len(prior_months) < MONTHLY_HISTORY_MIN:
+        return None, 0
+
+    baseline_months = prior_months[:MONTHLY_HISTORY_MAX]
+    baseline_avg = mean(total for _, total in baseline_months)
+    return baseline_avg, len(baseline_months)
 
 
 # ===========================================================================
@@ -39,7 +100,12 @@ LOF_CONTAMINATION      = 0.05 # expected fraction of outliers (5%)
 # ===========================================================================
 
 def _build_feature_matrix(transactions):
-   
+    """Turn raw transactions into a numeric feature matrix for LOF.
+
+    Features per transaction: amount, weekday, day-of-month, encoded
+    category, days since previous transaction, amount-vs-category-average
+    ratio, and running monthly total for that transaction's category month.
+    """
     if not transactions:
         return None, None, []
 
@@ -49,27 +115,26 @@ def _build_feature_matrix(transactions):
     cat_buckets = defaultdict(list)
     for t in txns:
         cat_buckets[t["category"]].append(float(t["amount"]))
-    cat_mean = {cat: mean(amts) for cat, amts in cat_buckets.items()}
+    cat_mean = {cat: mean(amounts) for cat, amounts in cat_buckets.items()}
 
-    cat_le = LabelEncoder()
-    cat_le.fit([t["category"] for t in txns])
+    cat_encoder = LabelEncoder()
+    cat_encoder.fit([t["category"] for t in txns])
 
     monthly_cumulative = defaultdict(float)
-    rows      = []
-    txn_ids   = []
+    rows, txn_ids = [], []
     prev_date = None
 
     for t in txns:
-        amt       = float(t["amount"])
-        txn_date  = t["date"]
-        month_key = (txn_date.year, txn_date.month)
-        cat       = t["category"]
+        amt = float(t["amount"])
+        txn_date = t["date"]
+        cat = t["category"]
+        month_key = _month_key(txn_date)
 
-        days_gap  = (txn_date - prev_date).days if prev_date else 0
+        days_gap = (txn_date - prev_date).days if prev_date else 0
         prev_date = txn_date
 
         cat_avg = cat_mean.get(cat, amt)
-        ratio   = amt / cat_avg if cat_avg > 0 else 1.0
+        ratio = amt / cat_avg if cat_avg > 0 else 1.0
 
         monthly_cumulative[month_key] += amt
 
@@ -77,14 +142,14 @@ def _build_feature_matrix(transactions):
             amt,
             txn_date.weekday(),
             txn_date.day,
-            int(cat_le.transform([cat])[0]),
+            int(cat_encoder.transform([cat])[0]),
             days_gap,
             ratio,
             monthly_cumulative[month_key],
         ])
         txn_ids.append(t["id"])
 
-    return np.array(rows, dtype=float), cat_le, txn_ids
+    return np.array(rows, dtype=float), cat_encoder, txn_ids
 
 
 # ===========================================================================
@@ -92,36 +157,35 @@ def _build_feature_matrix(transactions):
 # ===========================================================================
 
 def _lof_signals(transactions):
-    """
-    Run Local Outlier Factor over all expense transactions.
-
+    """Run Local Outlier Factor over expense transactions, per category
+    where there's enough data, and pooled globally otherwise.
     """
     if not transactions or len(transactions) < ML_MIN_SAMPLES:
         return {}
 
-    results    = {}
     cat_groups = defaultdict(list)
     for t in transactions:
         cat_groups[t["category"]].append(t)
 
+    results = {}
     leftover = []
     for cat, cat_txns in cat_groups.items():
         if len(cat_txns) >= LOF_MIN_CAT_SAMPLES:
-            flagged = _run_lof(cat_txns, scope=f"within your '{cat}' transactions")
-            results.update(flagged)
+            results.update(_run_lof(cat_txns, scope=f"within your '{cat}' transactions"))
         else:
             leftover.extend(cat_txns)
 
     # Global pass for categories that didn't have enough data on their own
     if len(leftover) >= ML_MIN_SAMPLES:
-        flagged = _run_lof(leftover, scope="across your transaction history")
-        results.update(flagged)
+        results.update(_run_lof(leftover, scope="across your transaction history"))
 
     return results
 
 
 def _run_lof(txn_subset, scope: str):
-   
+    """Fit LOF on a subset of transactions and return {txn_id: (score, detail)}
+    for the ones flagged as outliers.
+    """
     X, _, txn_ids = _build_feature_matrix(txn_subset)
     if X is None:
         return {}
@@ -131,25 +195,24 @@ def _run_lof(txn_subset, scope: str):
     if n_neighbors < 2:
         return {}
 
-    scaler   = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    X_scaled = StandardScaler().fit_transform(X)
 
-    lof    = LocalOutlierFactor(n_neighbors=n_neighbors, contamination=LOF_CONTAMINATION)
+    lof = LocalOutlierFactor(n_neighbors=n_neighbors, contamination=LOF_CONTAMINATION)
     labels = lof.fit_predict(X_scaled)  # 1 = inlier, -1 = outlier
 
     # negative_outlier_factor_ is negative LOF score; flip so higher = more anomalous
-    raw_scores   = -lof.negative_outlier_factor_
+    raw_scores = -lof.negative_outlier_factor_
     min_s, max_s = raw_scores.min(), raw_scores.max()
-    norm_scores  = (
-        np.zeros_like(raw_scores) if max_s == min_s
-        else (raw_scores - min_s) / (max_s - min_s)
-    )
+    if max_s == min_s:
+        norm_scores = np.zeros_like(raw_scores)
+    else:
+        norm_scores = (raw_scores - min_s) / (max_s - min_s)
 
     flagged = {}
     for i, txn_id in enumerate(txn_ids):
         if labels[i] != -1:
             continue
-        score  = round(float(norm_scores[i]), 2)
+        score = round(float(norm_scores[i]), 2)
         detail = (
             f"LOF detected this as a local density outlier {scope} "
             f"(anomaly score {score:.2f}/1.00). Its combination of amount, "
@@ -165,130 +228,154 @@ def _run_lof(txn_subset, scope: str):
 # ===========================================================================
 
 def _build_category_stats(expenses):
+    """Return (cat_amounts, cat_monthly):
+    - cat_amounts: {category: [amount, ...]}
+    - cat_monthly: {category: {(year, month): total_amount}}
+    """
     cat_amounts = defaultdict(list)
     cat_monthly = defaultdict(lambda: defaultdict(float))
     for txn in expenses:
         cat = txn["category"]
         amt = float(txn["amount"])
         cat_amounts[cat].append(amt)
-        cat_monthly[cat][(txn["date"].year, txn["date"].month)] += amt
+        cat_monthly[cat][_month_key(txn["date"])] += amt
     return cat_amounts, cat_monthly
 
 
 def _build_income_monthly_stats(income_txns):
+    """Return (monthly_income, income_amounts):
+    - monthly_income: {(year, month): total_amount}
+    - income_amounts: flat list of all income amounts
+    """
     monthly_income = defaultdict(float)
     income_amounts = []
     for txn in income_txns:
         amt = float(txn["amount"])
-        monthly_income[(txn["date"].year, txn["date"].month)] += amt
+        monthly_income[_month_key(txn["date"])] += amt
         income_amounts.append(amt)
     return monthly_income, income_amounts
 
 
 def _z_score_signal(amount, cat_amounts_list):
-    if len(cat_amounts_list) < MIN_HISTORY_TXNS:
+    """Flag if `amount` is an outlier (> Z_SCORE_THRESHOLD std devs above
+    the mean) within its category's transaction history.
+    """
+    if len(cat_amounts_list) < MIN_HISTORY_TXNS or len(cat_amounts_list) < 2:
         return False, 0.0, ""
+
     mu = mean(cat_amounts_list)
-    if len(cat_amounts_list) < 2:
-        return False, 0.0, ""
     sd = stdev(cat_amounts_list)
     if sd == 0:
         return False, 0.0, ""
+
     z = (amount - mu) / sd
-    if z > Z_SCORE_THRESHOLD:
-        score  = min(1.0, z / 4.0)
-        detail = (
-            f"Amount {amount:.2f} has a Z-score of {z:.2f} in its category "
-            f"(mean {mu:.2f}, std {sd:.2f}). Threshold is {Z_SCORE_THRESHOLD}."
-        )
-        return True, round(score, 2), detail
-    return False, 0.0, ""
+    if z <= Z_SCORE_THRESHOLD:
+        return False, 0.0, ""
+
+    score = min(1.0, z / 4.0)
+    detail = (
+        f"Amount {amount:.2f} has a Z-score of {z:.2f} in its category "
+        f"(mean {mu:.2f}, std {sd:.2f}). Threshold is {Z_SCORE_THRESHOLD}."
+    )
+    return True, round(score, 2), detail
 
 
 def _category_spike_signal(amount, category, txn_date, cat_monthly):
+    """Flag if a single transaction is a large chunk (> CATEGORY_SINGLE_TXN_RATIO)
+    of its category's average monthly spend.
+    """
     monthly_totals = cat_monthly.get(category, {})
-    if len(monthly_totals) < 2:
+    txn_month_key = _month_key(txn_date)
+
+    prior_months = sorted(
+        [ym for ym in monthly_totals.keys() if ym < txn_month_key],
+        reverse=True
+    )
+    if len(prior_months) > 12:
+        prior_months = prior_months[:12]
+
+    if len(prior_months) < 2:
         return False, 0.0, ""
-    avg_monthly = mean(monthly_totals.values())
+
+    avg_monthly = mean(monthly_totals[ym] for ym in prior_months)
     if avg_monthly == 0:
         return False, 0.0, ""
+
     ratio = amount / avg_monthly
-    if ratio > CATEGORY_SINGLE_TXN_RATIO:
-        score  = min(1.0, ratio / 2.0)
-        detail = (
+    return _ratio_signal(
+        ratio, CATEGORY_SINGLE_TXN_RATIO, score_scale=2.0,
+        build_detail=lambda: (
             f"Single transaction of {amount:.2f} is {ratio:.0%} of the "
             f"average monthly spend ({avg_monthly:.2f}) in '{category}'."
-        )
-        return True, round(score, 2), detail
-    return False, 0.0, ""
+        ),
+    )
 
 
 def _daily_spike_signal(amount, daily_avg):
+    """Flag if a transaction is far above the user's average daily spend."""
     if daily_avg == 0:
         return False, 0.0, ""
+
     ratio = amount / daily_avg
-    if ratio > DAILY_SPIKE_MULTIPLIER:
-        score  = min(1.0, ratio / 10.0)
-        detail = (
+    return _ratio_signal(
+        ratio, DAILY_SPIKE_MULTIPLIER, score_scale=10.0,
+        build_detail=lambda: (
             f"Amount {amount:.2f} is {ratio:.1f}x the average daily "
             f"expense ({daily_avg:.2f}). Threshold is {DAILY_SPIKE_MULTIPLIER}x."
-        )
-        return True, round(score, 2), detail
-    return False, 0.0, ""
+        ),
+    )
 
 
 def _category_monthly_spike_signal(category, current_month_key, cat_monthly):
+    """Flag if a category's total for the current month is far above its
+    recent-month baseline.
+    """
     monthly_totals = cat_monthly.get(category, {})
-    prior_months   = sorted(
-        [(ym, tot) for ym, tot in monthly_totals.items() if ym < current_month_key],
-        key=lambda x: x[0], reverse=True,
-    )
-    if len(prior_months) < MONTHLY_HISTORY_MIN:
+    baseline_avg, months_used = _recent_month_baseline(monthly_totals, current_month_key)
+    if baseline_avg is None or baseline_avg == 0:
         return False, 0.0, ""
-    baseline_months = prior_months[:MONTHLY_HISTORY_MAX]
-    baseline_avg    = mean(t for _, t in baseline_months)
-    if baseline_avg == 0:
-        return False, 0.0, ""
+
     current_total = monthly_totals.get(current_month_key, 0.0)
     if current_total == 0:
         return False, 0.0, ""
+
     ratio = current_total / baseline_avg
-    if ratio > MONTHLY_SPIKE_MULTIPLIER:
-        score  = min(1.0, ratio / (MONTHLY_SPIKE_MULTIPLIER * 2))
-        detail = (
+    return _ratio_signal(
+        ratio, MONTHLY_SPIKE_MULTIPLIER, score_scale=MONTHLY_SPIKE_MULTIPLIER * 2,
+        build_detail=lambda: (
             f"Category '{category}' total this month ({current_total:.2f}) is "
-            f"{ratio:.1f}x the average of the prior {len(baseline_months)} months "
+            f"{ratio:.1f}x the average of the prior {months_used} months "
             f"({baseline_avg:.2f}). Threshold is {MONTHLY_SPIKE_MULTIPLIER}x."
-        )
-        return True, round(score, 2), detail
-    return False, 0.0, ""
+        ),
+    )
 
 
 def _income_spike_signal(amount, txn_date, monthly_income):
-    current_month_key = (txn_date.year, txn_date.month)
-    prior_months      = sorted(
-        [(ym, tot) for ym, tot in monthly_income.items() if ym < current_month_key],
-        key=lambda x: x[0], reverse=True,
-    )
-    if len(prior_months) < MONTHLY_HISTORY_MIN:
+    """Flag if a single income transaction is far above the recent monthly
+    income baseline.
+    """
+    current_month_key = _month_key(txn_date)
+    baseline_avg, months_used = _recent_month_baseline(monthly_income, current_month_key)
+    if baseline_avg is None or baseline_avg == 0:
         return False, 0.0, ""
-    baseline_months = prior_months[:MONTHLY_HISTORY_MAX]
-    baseline_avg    = mean(t for _, t in baseline_months)
-    if baseline_avg == 0:
-        return False, 0.0, ""
+
     ratio = amount / baseline_avg
-    if ratio > INCOME_SPIKE_MULTIPLIER:
-        score  = min(1.0, ratio / (INCOME_SPIKE_MULTIPLIER * 2))
-        detail = (
+    return _ratio_signal(
+        ratio, INCOME_SPIKE_MULTIPLIER, score_scale=INCOME_SPIKE_MULTIPLIER * 2,
+        build_detail=lambda: (
             f"Income of {amount:.2f} is {ratio:.1f}x the average monthly "
-            f"income of the prior {len(baseline_months)} months ({baseline_avg:.2f}). "
+            f"income of the prior {months_used} months ({baseline_avg:.2f}). "
             f"Threshold is {INCOME_SPIKE_MULTIPLIER}x."
-        )
-        return True, round(score, 2), detail
-    return False, 0.0, ""
+        ),
+    )
 
 
 def _find_suspicious_repeats(expenses_in_window):
+    """Flag transactions that repeat the same (title, amount) at least
+    REPEAT_MIN_COUNT times within a REPEAT_WINDOW_DAYS sliding window.
+
+    Returns {txn_id: (repeat_count, score, detail)}.
+    """
     groups = defaultdict(list)
     for txn in expenses_in_window:
         key = (txn["title"].strip().lower(), float(txn["amount"]))
@@ -299,17 +386,112 @@ def _find_suspicious_repeats(expenses_in_window):
         txns_sorted = sorted(txns, key=lambda t: t["date"])
         for i, anchor in enumerate(txns_sorted):
             window_end = anchor["date"] + timedelta(days=REPEAT_WINDOW_DAYS)
-            cluster    = [t for t in txns_sorted[i:] if t["date"] <= window_end]
-            if len(cluster) >= REPEAT_MIN_COUNT:
-                score  = min(1.0, len(cluster) / 5.0)
-                detail = (
-                    f"'{title}' for {amount:.2f} appeared {len(cluster)} "
-                    f"times within {REPEAT_WINDOW_DAYS} days."
-                )
-                for t in cluster:
-                    if t["id"] not in flagged or flagged[t["id"]][1] < score:
-                        flagged[t["id"]] = (len(cluster), round(score, 2), detail)
+            cluster = [t for t in txns_sorted[i:] if t["date"] <= window_end]
+            if len(cluster) < REPEAT_MIN_COUNT:
+                continue
+
+            score = min(1.0, len(cluster) / 5.0)
+            detail = (
+                f"'{title}' for {amount:.2f} appeared {len(cluster)} "
+                f"times within {REPEAT_WINDOW_DAYS} days."
+            )
+            for t in cluster:
+                if t["id"] not in flagged or flagged[t["id"]][1] < score:
+                    flagged[t["id"]] = (len(cluster), round(score, 2), detail)
+
     return flagged
+
+
+# ===========================================================================
+# Window analysis (expense / income)
+# ===========================================================================
+
+def _analyse_expense_window(window_txns, window_month_key, cat_amounts, cat_monthly,
+                             daily_avg, lof_results):
+    """Run every expense signal over a window of transactions and return the
+    flagged anomalies sorted by score (highest first), or None if empty.
+    """
+    if not window_txns:
+        return None
+
+    repeat_flags = _find_suspicious_repeats(window_txns)
+
+    # Category monthly spike is the same for every txn in a category for this
+    # window's month, so compute it once per category instead of per txn.
+    monthly_spike_by_cat = {
+        cat: _category_monthly_spike_signal(cat, window_month_key, cat_monthly)
+        for cat in {t["category"] for t in window_txns}
+    }
+
+    anomalies = []
+    for txn in window_txns:
+        amt = float(txn["amount"])
+        txn_id = txn["id"]
+        reasons = []
+
+        def add_reason(signal_name, trig, score, detail):
+            if trig:
+                reasons.append({"signal": signal_name, "detail": detail, "score": score})
+
+        add_reason("amount_outlier", *_z_score_signal(amt, cat_amounts.get(txn["category"], [])))
+        add_reason("category_spike", *_category_spike_signal(amt, txn["category"], txn["date"], cat_monthly))
+
+        if txn_id in repeat_flags:
+            _, score, detail = repeat_flags[txn_id]
+            reasons.append({"signal": "suspicious_repeat", "detail": detail, "score": score})
+
+        add_reason("daily_spike", *_daily_spike_signal(amt, daily_avg))
+        add_reason("category_monthly_spike", *monthly_spike_by_cat.get(txn["category"], (False, 0.0, "")))
+
+        if txn_id in lof_results:
+            score, detail = lof_results[txn_id]
+            reasons.append({"signal": "lof", "detail": detail, "score": score})
+
+        if reasons:
+            anomalies.append({
+                "transaction_id": txn_id,
+                "title": txn["title"],
+                "amount": amt,
+                "date": txn["date"].isoformat(),
+                "category": txn["category"],
+                "anomaly_score": max(r["score"] for r in reasons),
+                "anomaly_reasons": reasons,
+                # True if LOF spotted something the rules alone missed
+                "ml_contributed": any(r["signal"] == "lof" for r in reasons),
+            })
+
+    if not anomalies:
+        return None
+    anomalies.sort(key=lambda a: a["anomaly_score"], reverse=True)
+    return anomalies
+
+
+def _analyse_income_window(income_window_txns, monthly_income):
+    """Rule-based only (income is typically sparse) — flags income spikes."""
+    if not income_window_txns:
+        return None
+
+    anomalies = []
+    for txn in income_window_txns:
+        amt = float(txn["amount"])
+        trig, score, detail = _income_spike_signal(amt, txn["date"], monthly_income)
+        if not trig:
+            continue
+        anomalies.append({
+            "transaction_id": txn["id"],
+            "title": txn["title"],
+            "amount": amt,
+            "date": txn["date"].isoformat(),
+            "category": txn["category"],
+            "anomaly_score": score,
+            "anomaly_reasons": [{"signal": "income_spike", "detail": detail, "score": score}],
+            "ml_contributed": False,
+        })
+
+    if not anomalies:
+        return None
+    anomalies.sort(key=lambda a: a["anomaly_score"], reverse=True)
+    return anomalies
 
 
 # ===========================================================================
@@ -317,14 +499,11 @@ def _find_suspicious_repeats(expenses_in_window):
 # ===========================================================================
 
 def detect_anomalies(user_id: int) -> dict:
-
-    today               = date.today()
+    today = date.today()
     current_month_start = today.replace(day=1)
-    current_month_key   = (today.year, today.month)
-
-    three_months_ago = (current_month_start - timedelta(days=1)).replace(day=1)
-    three_months_ago = (three_months_ago    - timedelta(days=1)).replace(day=1)
-    three_months_ago = (three_months_ago    - timedelta(days=1)).replace(day=1)
+    current_month_key = _month_key(today)
+    three_months_ago = _shift_month_start(current_month_start, -3)
+    one_month_ago_key = _month_key(_shift_month_start(current_month_start, -1))
 
     # ------------------------------------------------------------------
     # Fetch all transactions
@@ -344,157 +523,72 @@ def detect_anomalies(user_id: int) -> dict:
 
     if len(all_expenses) < MIN_HISTORY_TXNS:
         return {
-            "current_month":                  None,
-            "last_3_months":                  None,
+            "current_month": None,
+            "last_3_months": None,
             "current_month_income_anomalies": None,
             "last_3_months_income_anomalies": None,
-            "ml_active":                      False,
-            "insufficient_data":              True,
+            "ml_active": False,
+            "insufficient_data": True,
         }
 
     # ------------------------------------------------------------------
     # Rule-based: global stats
     # ------------------------------------------------------------------
     cat_amounts, cat_monthly = _build_category_stats(all_expenses)
-    monthly_income, _        = _build_income_monthly_stats(all_income)
+    monthly_income, _ = _build_income_monthly_stats(all_income)
 
-    date_range  = (all_expenses[-1]["date"] - all_expenses[0]["date"]).days + 1
-    total_spent = sum(float(t["amount"]) for t in all_expenses)
-    daily_avg   = total_spent / max(date_range, 1)
+    start_date = date(today.year - 1, today.month, 1)
+    has_older_data = len(all_expenses) > 0 and all_expenses[0]["date"] < start_date
+
+    if has_older_data:
+        daily_avg_expenses = [
+            t for t in all_expenses if start_date <= t["date"] < current_month_start
+        ]
+    else:
+        daily_avg_expenses = [
+            t for t in all_expenses if t["date"] < current_month_start
+        ]
+
+    if daily_avg_expenses:
+        date_range = (daily_avg_expenses[-1]["date"] - daily_avg_expenses[0]["date"]).days + 1
+        total_spent = sum(float(t["amount"]) for t in daily_avg_expenses)
+        daily_avg = total_spent / max(date_range, 1)
+    else:
+        daily_avg = 0.0
 
     # ------------------------------------------------------------------
-    # LOF: train on full expense history
-    # Active only when user has >= ML_MIN_SAMPLES transactions
+    # LOF: train on full expense history.
+    # Active only when user has >= ML_MIN_SAMPLES transactions.
     # ------------------------------------------------------------------
-    ml_active   = len(all_expenses) >= ML_MIN_SAMPLES
+    ml_active = len(all_expenses) >= ML_MIN_SAMPLES
     lof_results = _lof_signals(all_expenses) if ml_active else {}
 
     # ------------------------------------------------------------------
     # Window splits
     # ------------------------------------------------------------------
-    current_month_txns   = [t for t in all_expenses if t["date"] >= current_month_start]
-    last_3_months_txns   = [t for t in all_expenses
-                             if three_months_ago <= t["date"] < current_month_start]
+    current_month_txns = [t for t in all_expenses if t["date"] >= current_month_start]
+    last_3_months_txns = [
+        t for t in all_expenses if three_months_ago <= t["date"] < current_month_start
+    ]
     current_month_income = [t for t in all_income if t["date"] >= current_month_start]
-    last_3_months_income = [t for t in all_income
-                             if three_months_ago <= t["date"] < current_month_start]
-
-    one_month_ago    = (current_month_start - timedelta(days=1)).replace(day=1)
-    last_3_month_key = (one_month_ago.year, one_month_ago.month)
+    last_3_months_income = [
+        t for t in all_income if three_months_ago <= t["date"] < current_month_start
+    ]
 
     # ------------------------------------------------------------------
-    # Expense window analyser
-    # ------------------------------------------------------------------
-    def _analyse_expense_window(window_txns, window_month_key):
-        if not window_txns:
-            return None
-
-        repeat_flags = _find_suspicious_repeats(window_txns)
-
-        # Category monthly spike — computed once per category for this window month
-        cat_monthly_spike_cache = {}
-        for cat in {t["category"] for t in window_txns}:
-            cat_monthly_spike_cache[cat] = _category_monthly_spike_signal(
-                cat, window_month_key, cat_monthly
-            )
-
-        anomalies = []
-        for txn in window_txns:
-            amt    = float(txn["amount"])
-            txn_id = txn["id"]
-            reasons = []
-
-            # Signal 1 — Z-Score
-            trig, score, detail = _z_score_signal(amt, cat_amounts.get(txn["category"], []))
-            if trig:
-                reasons.append({"signal": "amount_outlier", "detail": detail, "score": score})
-
-            # Signal 2 — Category single-txn spike
-            trig, score, detail = _category_spike_signal(
-                amt, txn["category"], txn["date"], cat_monthly
-            )
-            if trig:
-                reasons.append({"signal": "category_spike", "detail": detail, "score": score})
-
-            # Signal 3 — Suspicious repeats
-            if txn_id in repeat_flags:
-                _, score, detail = repeat_flags[txn_id]
-                reasons.append({"signal": "suspicious_repeat", "detail": detail, "score": score})
-
-            # Signal 4 — Daily spike
-            trig, score, detail = _daily_spike_signal(amt, daily_avg)
-            if trig:
-                reasons.append({"signal": "daily_spike", "detail": detail, "score": score})
-
-            # Signal 5 — Category monthly total spike vs prior months
-            trig, score, detail = cat_monthly_spike_cache.get(
-                txn["category"], (False, 0.0, "")
-            )
-            if trig:
-                reasons.append({"signal": "category_monthly_spike", "detail": detail, "score": score})
-
-            # Signal 6 — LOF (ML, only when active)
-            if txn_id in lof_results:
-                score, detail = lof_results[txn_id]
-                reasons.append({"signal": "lof", "detail": detail, "score": score})
-
-            if reasons:
-                anomalies.append({
-                    "transaction_id":  txn_id,
-                    "title":           txn["title"],
-                    "amount":          amt,
-                    "date":            txn["date"].isoformat(),
-                    "category":        txn["category"],
-                    "anomaly_score":   max(r["score"] for r in reasons),
-                    "anomaly_reasons": reasons,
-                    # True if LOF spotted something the rules alone missed
-                    "ml_contributed":  any(r["signal"] == "lof" for r in reasons),
-                })
-
-        if not anomalies:
-            return None
-        anomalies.sort(key=lambda a: a["anomaly_score"], reverse=True)
-        return anomalies
-
-    # ------------------------------------------------------------------
-    # Income window analyser (rule-based only — income is typically sparse)
-    # ------------------------------------------------------------------
-    def _analyse_income_window(income_window_txns):
-        if not income_window_txns:
-            return None
-        anomalies = []
-        for txn in income_window_txns:
-            amt     = float(txn["amount"])
-            reasons = []
-            trig, score, detail = _income_spike_signal(amt, txn["date"], monthly_income)
-            if trig:
-                reasons.append({"signal": "income_spike", "detail": detail, "score": score})
-            if reasons:
-                anomalies.append({
-                    "transaction_id":  txn["id"],
-                    "title":           txn["title"],
-                    "amount":          amt,
-                    "date":            txn["date"].isoformat(),
-                    "category":        txn["category"],
-                    "anomaly_score":   max(r["score"] for r in reasons),
-                    "anomaly_reasons": reasons,
-                    "ml_contributed":  False,
-                })
-        if not anomalies:
-            return None
-        anomalies.sort(key=lambda a: a["anomaly_score"], reverse=True)
-        return anomalies
-
-    # ------------------------------------------------------------------
-    # Return
+    # Analyse each window and return
     # ------------------------------------------------------------------
     return {
-        "current_month":                  _analyse_expense_window(current_month_txns, current_month_key),
-        "last_3_months":                  _analyse_expense_window(last_3_months_txns, last_3_month_key),
-        "current_month_income_anomalies": _analyse_income_window(current_month_income),
-        "last_3_months_income_anomalies": _analyse_income_window(last_3_months_income),
+        "current_month": _analyse_expense_window(
+            current_month_txns, current_month_key, cat_amounts, cat_monthly, daily_avg, lof_results
+        ),
+        "last_3_months": _analyse_expense_window(
+            last_3_months_txns, one_month_ago_key, cat_amounts, cat_monthly, daily_avg, lof_results
+        ),
+        "current_month_income_anomalies": _analyse_income_window(current_month_income, monthly_income),
+        "last_3_months_income_anomalies": _analyse_income_window(last_3_months_income, monthly_income),
         # Metadata — useful for the UI
-        "ml_active":               ml_active,
+        "ml_active": ml_active,
         "ml_min_samples_required": ML_MIN_SAMPLES,
-        "user_total_expenses":     len(all_expenses),
+        "user_total_expenses": len(all_expenses),
     }

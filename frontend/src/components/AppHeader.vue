@@ -20,19 +20,6 @@
 
       <!-- Right actions -->
       <div class="header-actions">
-        <!-- Notification bell -->
-        <button class="btn btn-icon notif-btn" title="Notifications">
-          <span class="material-symbols-outlined icon-sm">notifications</span>
-          <span class="notif-dot"></span>
-        </button>
-
-        <!-- Settings -->
-        <button class="btn btn-icon" title="Settings">
-          <span class="material-symbols-outlined icon-sm">settings</span>
-        </button>
-
-        <div class="header-divider"></div>
-
         <!-- User -->
         <div class="user-menu-container">
           <div class="user-chip" @click="showDropdown = !showDropdown">
@@ -40,7 +27,7 @@
               <div class="t-body" style="font-weight:600;line-height:1.2">
                 {{ user ? user.username : 'User' }}
               </div>
-              <div class="t-label text-faint" style="font-size:0.6rem">
+              <div class="t-label text-faint" style="font-size:0.6rem;text-transform:lowercase">
                 {{ user ? user.email : 'Member' }}
               </div>
             </div>
@@ -54,7 +41,7 @@
                 <div class="t-body" style="font-weight:700;color:var(--col-primary)">
                   {{ user ? user.username : 'User' }}
                 </div>
-                <div class="t-label text-faint" style="font-size:0.75rem;margin-top:2px">
+                <div class="t-label text-faint" style="font-size:0.75rem;margin-top:2px;text-transform:lowercase">
                   {{ user ? user.email : '' }}
                 </div>
               </div>
@@ -159,19 +146,9 @@ const navItems = [
   display: flex; align-items: center; gap: var(--space-xs);
   margin-left: auto;
 }
-.header-divider {
-  width: 1px; height: 24px;
-  background: var(--col-border);
-  margin: 0 var(--space-sm);
-}
-.notif-btn { position: relative; }
-.notif-dot {
-  position: absolute; top: 6px; right: 6px;
-  width: 7px; height: 7px;
-  background: var(--col-error);
-  border-radius: 50%;
-  border: 1.5px solid #fff;
-}
+
+
+
 
 /* User chip */
 .user-menu-container {

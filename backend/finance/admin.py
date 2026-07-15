@@ -23,8 +23,8 @@ class AnomalousTransactionAdmin(admin.ModelAdmin):
 
 
 class MLResultAdmin(admin.ModelAdmin):
-    list_display = ('user', 'feature', 'status', 'computed_at')
-    list_filter = ('feature', 'status')
+    list_display = ('user', 'feature', 'computed_at')
+    list_filter = ('feature',)
     search_fields = ('user__username',)
     readonly_fields = ('result',)
 

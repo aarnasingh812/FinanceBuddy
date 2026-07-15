@@ -528,10 +528,18 @@ async function handleSubmit() {
   display: flex; justify-content: space-between; align-items: center;
 }
 .show-btn {
-  font-size: 0.6rem; font-weight: 700; letter-spacing: 0.08em;
+  font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.08em;
   color: var(--col-primary); background: none; border: none;
   cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
   font-family: inherit;
+  padding: 4px 8px;
+  position: relative;
+  z-index: 2;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.show-btn:hover {
+  opacity: 0.7;
 }
 
 /* Strength meter */

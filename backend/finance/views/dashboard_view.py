@@ -193,6 +193,8 @@ class DashboardView(APIView):
         # ----------------------------------------------------------------
         goals = Goal.objects.filter(user=request.user, status="current")
 
+        has_transactions = Transaction.objects.filter(user=request.user).exists()
+
         # ----------------------------------------------------------------
         # Build response
         # ----------------------------------------------------------------
@@ -210,6 +212,7 @@ class DashboardView(APIView):
             "spending_breakdown": spending_breakdown,
             "transactions": DashboardTransactionSerializer(current_txns, many=True).data,
             "goals":        DashboardGoalSerializer(goals, many=True).data,
+            "has_transactions":   has_transactions,
         }
 
         return Response(response_data, status=status.HTTP_200_OK)

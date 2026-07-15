@@ -11,7 +11,7 @@
       </div>
       <button @click="$emit('trigger-ml-compute')" class="btn btn-primary" :disabled="mlComputing || loading">
         <span class="material-symbols-outlined icon-sm" :class="{ spinning: mlComputing }">sync</span>
-        {{ mlComputing ? 'Re-computing…' : 'Refresh Insights' }}
+        {{ mlComputing ? 'Re-computing…' : 'Refresh' }}
       </button>
     </div>
 
@@ -26,7 +26,7 @@
       <span class="material-symbols-outlined" style="font-size:48px;color:var(--col-text-faint)">analytics</span>
       <div class="t-title" style="margin-top:var(--space-md)">No Insights Available</div>
       <p class="t-body text-muted" style="margin-top:var(--space-sm);max-width:420px;text-align:center;margin-bottom:var(--space-md)">
-        {{ insightsApi?.message || "Click 'Refresh Insights' above to compute ML features and generate personalised insights." }}
+        {{ insightsApi?.message || "Click 'Refresh' above to compute ML features and generate personalised insights." }}
       </p>
       <button @click="$emit('trigger-ml-compute')" class="btn btn-primary" :disabled="mlComputing || loading">
         <span class="material-symbols-outlined icon-sm" :class="{ spinning: mlComputing }">sync</span>
@@ -37,19 +37,18 @@
     <!-- ── Main Insights Content ──────────────────────────────── -->
     <template v-else>
 
-    <!-- ── Critical Alert Banner ─────────────────────────────── -->
+    <!-- ── Take a Glance Banner ─────────────────────────────── -->
     <div v-if="portfolioInsight" class="alert-banner-insights fade-up">
       <div class="alert-left">
-        <h2 class="t-headline" style="margin-bottom:4px">Critical Alert: Financial Health</h2>
+        <h2 class="t-headline" style="margin-bottom:4px">Take a Glance</h2>
         <div style="display:flex;align-items:center;gap:8px">
-          <span class="material-symbols-outlined icon-sm icon-filled" style="color:var(--col-error)">warning</span>
           <p class="t-body">{{ portfolioInsight?.insight }}</p>
         </div>
       </div>
       <div v-if="insightsApi.spend_optimization" class="alert-stat-box">
         <div class="t-label" style="opacity:.8;letter-spacing:.06em;text-transform:uppercase">Avg Monthly Savings</div>
         <div class="t-headline" style="font-weight:700;margin-top:4px;font-feature-settings:'tnum'">
-          –₹{{ fmt(Math.abs(insightsApi.spend_optimization.monthly_expense_avg - insightsApi.spend_optimization.monthly_income_avg)) }}/mo
+          ₹{{ fmt(Math.abs(insightsApi.spend_optimization.monthly_expense_avg - insightsApi.spend_optimization.monthly_income_avg)) }}/mo
         </div>
       </div>
     </div>
@@ -59,13 +58,6 @@
       <div v-if="insightsApi.spend_optimization" class="summary-stat card">
         <div class="t-label text-muted" style="margin-bottom:4px">Avg Monthly Expense</div>
         <div class="t-metric">₹{{ fmt(insightsApi.spend_optimization.monthly_expense_avg) }}</div>
-      </div>
-      <div v-if="insightsApi.spend_optimization" class="summary-stat card">
-        <div class="t-label text-muted" style="margin-bottom:4px">Current Month Expense</div>
-        <div class="t-metric">₹{{ fmt(insightsApi.spend_optimization.current_month_expense) }}</div>
-        <div v-if="currentMonthVsAvgPct !== null" class="t-label" :class="currentMonthVsAvgPct > 0 ? 'text-error' : 'text-accent'" style="margin-top:4px;font-weight:600">
-          {{ currentMonthVsAvgPct > 0 ? '▲' : '▼' }} {{ Math.abs(currentMonthVsAvgPct) }}% vs avg
-        </div>
       </div>
       <div v-if="insightsApi.spend_optimization" class="summary-stat card">
         <div class="t-label text-muted" style="margin-bottom:4px">Avg Monthly Income</div>
@@ -99,13 +91,14 @@
                 <th>Recommendation</th>
                 <th>Type</th>
                 <th>Priority</th>
-                <th class="text-right">Monthly Saving</th>
+                <th class="text-right">Est. Monthly Savings</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="rec in insightsApi.savings_opportunities.recommendations"
                   :key="rec.title"
-                  class="opp-row">
+                  class="opp-row"
+                  @click="selectedRec = rec">
                 <td class="opp-main">
                   <div class="t-body" style="font-weight:600">{{ rec.title }}</div>
                   <div class="t-label text-muted opp-detail">{{ rec.detail }}</div>
@@ -125,6 +118,7 @@
                   <div class="t-mono text-accent" style="font-weight:700;font-size:0.9rem">
                     +₹{{ fmt(rec.estimated_monthly_savings) }}
                   </div>
+                  <div class="opp-click-hint t-label text-muted" style="font-size:0.6rem;margin-top:3px">click for details</div>
                 </td>
               </tr>
             </tbody>
@@ -341,14 +335,7 @@
       </div>
     </section>
 
-    <!-- ── LLM footer ─────────────────────────────────────────── -->
-    <div v-if="insightsApi.llm_insights" class="llm-footer fade-up" style="animation-delay:260ms">
-      <span class="material-symbols-outlined icon-sm text-faint">smart_toy</span>
-      <span class="t-label text-faint">
-        Insights generated by {{ insightsApi.llm_insights.model_used }} ·
-        {{ fmtTs(insightsApi.llm_insights.generated_at) }}
-      </span>
-    </div>
+   
 
     <!-- ── Computed At footer (when no LLM) ────────────────────── -->
     <div v-else-if="insightsApi.computed_at" class="llm-footer fade-up" style="animation-delay:260ms">
@@ -360,11 +347,63 @@
 
     </template><!-- /main content -->
 
+    <!-- ── Recommendation Detail Modal ──────────────────────────── -->
+    <Teleport to="body">
+      <Transition name="rec-modal">
+        <div v-if="selectedRec" class="rec-modal-backdrop" @click.self="selectedRec = null">
+          <div class="rec-modal-box" role="dialog" aria-modal="true">
+
+            <!-- Modal header -->
+            <div class="rec-modal-header">
+              <div class="rec-modal-icon" :class="selectedRec.priority === 'high' ? 'icon-high' : 'icon-medium'">
+                <span class="material-symbols-outlined">
+                  {{ selectedRec.type === 'anomaly_reduction' ? 'monitoring' : 'savings' }}
+                </span>
+              </div>
+              <div style="flex:1;min-width:0">
+                <div class="t-title" style="color:var(--col-text-primary);line-height:1.3">{{ selectedRec.title }}</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+                  <span class="badge badge-neutral" style="text-transform:capitalize">
+                    {{ selectedRec.type === 'anomaly_reduction' ? 'Anomaly Reduction' : 'Discretionary' }}
+                  </span>
+                  <span :class="['badge', selectedRec.priority === 'high' ? 'badge-error' : 'badge-warn']"
+                        style="text-transform:capitalize">
+                    {{ selectedRec.priority }} priority
+                  </span>
+                </div>
+              </div>
+              <button class="rec-modal-close" @click="selectedRec = null" aria-label="Close">
+                <span class="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <!-- Savings highlight -->
+            <div class="rec-modal-savings">
+              <div class="t-label text-muted" style="margin-bottom:4px;letter-spacing:.05em;text-transform:uppercase;font-size:0.6rem">Estimated Monthly Savings</div>
+              <div class="rec-savings-amount">+₹{{ fmt(selectedRec.estimated_monthly_savings) }}<span class="t-label text-muted" style="font-size:0.75rem;font-weight:500">/month</span></div>
+            </div>
+
+            <!-- Detail text -->
+            <div class="rec-modal-detail">
+              <div class="t-label" style="font-weight:700;letter-spacing:.05em;text-transform:uppercase;font-size:0.6rem;color:var(--col-text-faint);margin-bottom:8px">Analysis</div>
+              <p class="t-body" style="line-height:1.75;color:var(--col-text-secondary)">{{ selectedRec.detail }}</p>
+            </div>
+
+            <!-- Action footer -->
+            <div class="rec-modal-footer">
+              <button class="btn btn-primary" style="flex:1" @click="selectedRec = null">Got it</button>
+            </div>
+
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
   </div>
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 const props = defineProps({
   insightsData: {
@@ -382,6 +421,9 @@ const props = defineProps({
 })
 
 defineEmits(['trigger-ml-compute'])
+
+// ── Recommendation detail modal ───────────────────────────────────
+const selectedRec = ref(null)
 
 // ── API response (from parent via props) ─────────────────────────
 const insightsApi = computed(() => props.insightsData)
@@ -730,5 +772,118 @@ function getGoalName(goalId) {
 /* Spinning animation */
 .spinning {
   animation: spin 1s linear infinite;
+}
+
+/* Click hint in opp-row */
+.opp-click-hint { opacity: 0; transition: opacity var(--dur-fast); }
+.opp-row:hover .opp-click-hint { opacity: 1; }
+
+/* ── Recommendation Modal ─────────────────────────────────────── */
+.rec-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 12, 20, 0.65);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: var(--space-lg);
+}
+.rec-modal-box {
+  background: var(--col-surface-card);
+  border: 1px solid var(--col-border);
+  border-radius: var(--r-xl);
+  box-shadow: 0 24px 80px rgba(0,0,0,0.4), 0 4px 16px rgba(0,0,0,0.2);
+  width: 100%;
+  max-width: 520px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.rec-modal-header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--col-border);
+}
+.rec-modal-icon {
+  flex-shrink: 0;
+  width: 48px; height: 48px;
+  border-radius: var(--r-lg);
+  display: flex; align-items: center; justify-content: center;
+}
+.rec-modal-icon.icon-high {
+  background: var(--col-error-bg);
+  border: 1px solid var(--col-error-border);
+  color: var(--col-error);
+}
+.rec-modal-icon.icon-medium {
+  background: var(--col-warn-bg);
+  border: 1px solid #fde68a;
+  color: var(--col-warn);
+}
+.rec-modal-close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--col-text-faint);
+  padding: 4px;
+  border-radius: var(--r-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--dur-fast), background var(--dur-fast);
+}
+.rec-modal-close:hover {
+  color: var(--col-text-primary);
+  background: var(--col-surface-low);
+}
+.rec-modal-savings {
+  padding: var(--space-md) var(--space-lg);
+  background: linear-gradient(135deg, var(--col-accent-light) 0%, transparent 100%);
+  border-bottom: 1px solid var(--col-border);
+}
+.rec-savings-amount {
+  font-size: 2rem;
+  font-weight: 800;
+  font-family: var(--font-mono, monospace);
+  color: var(--col-accent);
+  line-height: 1.1;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.rec-modal-detail {
+  padding: var(--space-lg);
+  flex: 1;
+}
+.rec-modal-footer {
+  padding: var(--space-md) var(--space-lg);
+  border-top: 1px solid var(--col-border);
+  display: flex;
+  gap: var(--space-sm);
+}
+
+/* Modal transition */
+.rec-modal-enter-active,
+.rec-modal-leave-active {
+  transition: opacity 0.2s ease;
+}
+.rec-modal-enter-active .rec-modal-box,
+.rec-modal-leave-active .rec-modal-box {
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), opacity 0.2s ease;
+}
+.rec-modal-enter-from,
+.rec-modal-leave-to {
+  opacity: 0;
+}
+.rec-modal-enter-from .rec-modal-box,
+.rec-modal-leave-to .rec-modal-box {
+  transform: scale(0.92) translateY(12px);
+  opacity: 0;
 }
 </style>

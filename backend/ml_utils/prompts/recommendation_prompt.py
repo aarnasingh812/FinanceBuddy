@@ -105,10 +105,7 @@ def _fmt(amount) -> str:
 
 
 def build_prompt(context: dict) -> str:
-    """
-    Build a token-efficient prompt from the structured context dict.
-    Uses compact key=value lines and drops zero-value / empty fields.
-    """
+   
     lines = []
 
     # -- User profile (single line)
@@ -220,15 +217,15 @@ def build_prompt(context: dict) -> str:
                     )
 
     # -- Recurring (top 5 max)
-    recurring = context.get("recurring_summary")
-    if recurring:
-        lines.append("\nRECURRING:")
-        for item in recurring[:5]:
-            lines.append(
-                f"  {item.get('title','')}: {_fmt(item.get('amount',0))} "
-                f"every ~{item.get('mean_gap_days',30):.0f}d "
-                f"({item.get('recurring_type','?')})"
-            )
+    # recurring = context.get("recurring_summary")
+    # if recurring:
+    #     lines.append("\nRECURRING:")
+    #     for item in recurring[:5]:
+    #         lines.append(
+    #             f"  {item.get('title','')}: {_fmt(item.get('amount',0))} "
+    #             f"every ~{item.get('mean_gap_days',30):.0f}d "
+    #             f"({item.get('recurring_type','?')})"
+    #         )
 
     # -- Task instruction (single line)
     lines.append(

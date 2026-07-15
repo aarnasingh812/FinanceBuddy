@@ -50,17 +50,38 @@
             <p class="t-body text-muted">{{ dashboardMonthLabel }} · Last updated {{ lastUpdatedLabel }}</p>
           </div>
           <div class="heading-actions">
-            <button class="btn btn-ghost">
-              <span class="material-symbols-outlined icon-sm">calendar_month</span>
-              {{ dashboardMonthLabel }}
-            </button>
+            <div class="month-toggle">
+              <button
+                :class="['month-toggle-btn', { active: dashboardMonthMode === 'current' }]"
+                @click="switchDashboardMonth('current')"
+              >
+                <span class="material-symbols-outlined icon-xs">today</span>
+                Current Month
+              </button>
+              <button
+                :class="['month-toggle-btn', { active: dashboardMonthMode === 'last' }]"
+                @click="switchDashboardMonth('last')"
+              >
+                <span class="material-symbols-outlined icon-xs">event</span>
+                Last Month
+              </button>
+            </div>
           </div>
+        </div>
+
+        <!-- Onboarding banner for new user (no data in DB) -->
+        <div v-if="dashboardData && !dashboardData.has_transactions" class="info-banner fade-up" style="animation-delay:50ms">
+          <span class="material-symbols-outlined icon-sm icon-filled" style="color:var(--col-blue)">info</span>
+          <span class="t-body" style="font-weight:600">Upload your last 2 months of transactions to unlock personalized guidance from your Finance Buddy.</span>
+          <button class="btn btn-primary" style="margin-left:auto;padding:6px 12px;font-size:0.75rem;font-weight:600" @click="activePage = 'Transactions'">
+            Go to Transactions
+          </button>
         </div>
 
         <!-- ── Alert banner (overspent) ─────────────────── -->
         <div v-if="dashboardSummary.net_savings < 0" class="alert-banner fade-up" style="animation-delay:50ms">
           <span class="material-symbols-outlined icon-sm icon-filled" style="color:var(--col-error)">warning</span>
-          <span class="t-body" style="font-weight:600">You're overspending this month.</span>
+          <span class="t-body" style="font-weight:600">{{ dashboardMonthMode === 'last' ? 'You overspent last month.' : "You're overspending this month." }}</span>
           <span class="t-body text-muted">Expenses exceed income by {{ fmtCurrency(Math.abs(dashboardSummary.net_savings)) }} — check your Goal Forecast below.</span>
           <button class="btn btn-ghost" style="margin-left:auto;padding:4px 10px;font-size:0.75rem">
             Review Goals
@@ -192,17 +213,35 @@ const currentScreen = ref('login')
 const activePage    = ref('Dashboard')
 const currentUser   = ref(null)
 
-onMounted(() => {
+function handleUnauthorized() {
+  localStorage.removeItem('access_token')
+  localStorage.removeItem('refresh_token')
+  localStorage.removeItem('user')
+  currentUser.value = null
+  currentScreen.value = 'login'
+}
+
+onMounted(async () => {
   const token = localStorage.getItem('access_token')
   const userJson = localStorage.getItem('user')
   if (token && userJson) {
     try {
       currentUser.value = JSON.parse(userJson)
-      currentScreen.value = 'app'
-      fetchDashboard()
+      // Validate token by making a test API call before showing the app
+      const resp = await fetch('http://localhost:8000/api/finance-buddy/dashboard', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      if (resp.ok) {
+        dashboardData.value = await resp.json()
+        lastUpdated.value = new Date()
+        currentScreen.value = 'app'
+      } else {
+        // Token expired or invalid — force login
+        handleUnauthorized()
+      }
     } catch (e) {
-      localStorage.removeItem('access_token')
-      localStorage.removeItem('user')
+      // Network error or bad JSON — force login
+      handleUnauthorized()
     }
   }
 })
@@ -252,14 +291,39 @@ const lastUpdated = ref(null)
 
 const mlComputing  = ref(false)
 
+// ── Month toggle (current vs last month) ─────────────────────────
+const dashboardMonthMode = ref('current')   // 'current' | 'last'
+
+function _getLastMonthYear() {
+  const now = new Date()
+  let y = now.getFullYear()
+  let m = now.getMonth()   // 0-indexed: Jan=0
+  if (m === 0) { m = 12; y -= 1 } // wrap to Dec of previous year
+  return `${y}-${String(m).padStart(2, '0')}`
+}
+
+function switchDashboardMonth(mode) {
+  if (mode === dashboardMonthMode.value) return
+  dashboardMonthMode.value = mode
+  fetchDashboard()
+}
+
 async function fetchDashboard() {
   const token = localStorage.getItem('access_token')
-  if (!token) return
+  if (!token) { handleUnauthorized(); return }
   dashboardLoading.value = true
   try {
-    const resp = await fetch('http://localhost:8000/api/finance-buddy/dashboard', {
+    let url = 'http://localhost:8000/api/finance-buddy/dashboard'
+    if (dashboardMonthMode.value === 'last') {
+      url += `?month_year=${_getLastMonthYear()}`
+    }
+    const resp = await fetch(url, {
       headers: { 'Authorization': `Bearer ${token}` }
     })
+    if (resp.status === 401) {
+      handleUnauthorized()
+      return
+    }
     if (resp.ok) {
       dashboardData.value = await resp.json()
       lastUpdated.value = new Date()
@@ -485,11 +549,58 @@ const spendingCenterLabel = computed(() => {
 .page-heading { display: flex; justify-content: space-between; align-items: flex-end; }
 .heading-actions { display: flex; gap: var(--space-sm); align-items: center; }
 
+/* Month toggle switch */
+.month-toggle {
+  display: inline-flex;
+  background: var(--col-surface-alt, rgba(255,255,255,0.04));
+  border: 1px solid var(--col-border, rgba(255,255,255,0.08));
+  border-radius: var(--r-lg, 12px);
+  padding: 3px;
+  gap: 2px;
+}
+.month-toggle-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 16px;
+  border: none;
+  border-radius: var(--r-md, 8px);
+  background: transparent;
+  color: var(--col-text-secondary, #9ca3af);
+  font-size: 0.82rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  white-space: nowrap;
+}
+.month-toggle-btn:hover:not(.active) {
+  color: var(--col-text-primary, #e5e7eb);
+  background: rgba(255,255,255,0.04);
+}
+.month-toggle-btn.active {
+  background: var(--col-primary, #3980f4);
+  color: #fff;
+  box-shadow: 0 1px 6px rgba(57, 128, 244, 0.35);
+}
+.icon-xs {
+  font-size: 16px !important;
+}
+@media (max-width: 640px) {
+  .month-toggle-btn { padding: 6px 10px; font-size: 0.75rem; }
+  .month-toggle-btn .icon-xs { display: none; }
+}
+
 .alert-banner {
   display: flex; align-items: center; gap: var(--space-sm);
   padding: 10px var(--space-md);
   background: var(--col-error-bg);
   border: 1px solid var(--col-error-border);
+  border-radius: var(--r-lg);
+}
+.info-banner {
+  display: flex; align-items: center; gap: var(--space-sm);
+  padding: 10px var(--space-md);
+  background: var(--col-blue-light);
+  border: 1px solid rgba(57, 128, 244, 0.2);
   border-radius: var(--r-lg);
 }
 

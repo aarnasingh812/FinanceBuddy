@@ -19,8 +19,9 @@ class MLResult(models.Model):
     class Meta:
         ordering = ['-computed_at']
         indexes = [
-            models.Index(fields=['user', 'feature', 'status']),
+            models.Index(fields=['user', 'feature', '-computed_at']),
         ]
 
     def __str__(self):
-        return f"{self.user.username} — {self.feature} ({'current' if self.status else 'old'}) — {self.computed_at}"
+        return f"{self.user.username} — {self.feature} — {self.computed_at}"
+

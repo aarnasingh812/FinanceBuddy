@@ -45,7 +45,7 @@ class RisingSpendCategorySerializer(serializers.Serializer):
 class SpendOptimizationSerializer(serializers.Serializer):
     """Serializes the spend_optimization section."""
     monthly_expense_avg = serializers.FloatField(read_only=True)
-    current_month_expense = serializers.FloatField(read_only=True)
+    #current_month_expense = serializers.FloatField(read_only=True)
     monthly_income_avg = serializers.FloatField(read_only=True)
     top_categories = SpendCategorySerializer(many=True, read_only=True, allow_null=True)
     rising_spend_categories = RisingSpendCategorySerializer(
