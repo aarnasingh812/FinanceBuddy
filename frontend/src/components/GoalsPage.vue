@@ -29,15 +29,7 @@
         </div>
       </div>
 
-      <div class="card summary-card" style="border-left:4px solid var(--col-error)">
-        <div class="summary-icon" style="background:var(--col-error-bg)">
-          <span class="material-symbols-outlined icon-md" style="color:var(--col-error)">trending_down</span>
-        </div>
-        <div>
-          <div class="t-label text-muted" style="text-transform:uppercase;letter-spacing:.06em">Achievable</div>
-          <div class="t-metric text-error" style="font-size:1.625rem">0 on track</div>
-        </div>
-      </div>
+
 
       <div class="card summary-card">
         <div class="summary-icon" style="background:var(--col-accent-light)">
@@ -80,10 +72,6 @@
             <div class="goal-name-row">
               <h3 class="t-title" style="color:var(--col-primary)">{{ capitaliseName(goal.name) }}</h3>
               <span class="badge badge-success">{{ capitalise(goal.status) }}</span>
-              <span class="badge badge-error">
-                <span class="material-symbols-outlined" style="font-size:10px">warning</span>
-                Off Track
-              </span>
             </div>
 
             <div class="goal-meta">
@@ -101,17 +89,7 @@
               </div>
             </div>
 
-            <!-- Progress bar -->
-            <div class="goal-progress">
-              <div class="progress-track" style="height:6px">
-                <div class="progress-fill"
-                     style="width:0%;background:var(--col-error)"></div>
-              </div>
-              <div style="display:flex;justify-content:space-between;margin-top:4px">
-                <span class="t-label text-error" style="font-weight:700">0% — Off Track</span>
-                <span class="t-label text-muted t-mono">₹0 / ₹{{ fmtAmt(goal.target_amount) }}</span>
-              </div>
-            </div>
+
           </div>
 
           <!-- Right: actions -->
@@ -139,56 +117,7 @@
       </div>
     </section>
 
-    <!-- ── Insight + Forecast row ─────────────────────────────── -->
-    <div class="insight-row fade-up" style="animation-delay:200ms">
 
-      <!-- Smart Insight card (2/3) -->
-      <div class="card insight-card">
-        <span class="badge badge-neutral" style="background:var(--col-primary);color:#fff;margin-bottom:var(--space-md)">
-          Smart Insight
-        </span>
-        <h2 class="t-headline" style="margin-bottom:var(--space-sm)">Closing the Savings Gap</h2>
-        <p class="t-body text-muted" style="line-height:1.6;margin-bottom:var(--space-lg)">
-          Based on your current spending pattern and 3 active goals, you have a monthly shortfall of
-          <strong style="color:var(--col-error)">₹12,406</strong>.
-          Implementing the recommended savings opportunities
-          (<strong style="color:var(--col-accent)">+₹14,307/month</strong>)
-          could make all goals achievable within their deadlines.
-        </p>
-        <button class="t-body" style="font-weight:700;color:var(--col-primary);display:flex;align-items:center;gap:6px;
-          background:none;border:none;cursor:pointer;text-decoration:underline;text-underline-offset:3px;
-          text-decoration-color:rgba(19,27,46,0.2)">
-          View Detailed Recommendations
-          <span class="material-symbols-outlined icon-sm">arrow_forward</span>
-        </button>
-      </div>
-
-      <!-- Quick Forecast card (1/3) -->
-      <div class="forecast-dark-card">
-        <div>
-          <h3 class="t-title" style="color:#fff;margin-bottom:8px">Quick Forecast</h3>
-          <p style="color:rgba(255,255,255,0.7);font-size:0.875rem;line-height:1.55">
-            By maintaining current savings, Emergency Fund will be reached by
-            <strong style="color:var(--col-accent-dim)">Jan 2028</strong>
-            instead of Aug 2027.
-          </p>
-        </div>
-        <div class="forecast-goals-mini">
-          <div v-for="g in goals" :key="g.id" class="mini-goal-row">
-            <span class="t-label" style="color:rgba(255,255,255,0.7);text-transform:capitalize;flex:1">
-              {{ capitaliseName(g.name) }}
-            </span>
-            <span class="badge badge-error" style="font-size:0.55rem">Off Track</span>
-          </div>
-        </div>
-        <button class="btn" style="background:rgba(255,255,255,0.12);color:#fff;padding:8px 16px;font-size:0.8125rem;
-          border:1px solid rgba(255,255,255,0.15);margin-top:var(--space-md)">
-          <span class="material-symbols-outlined icon-sm">insights</span>
-          Full Insights
-        </button>
-      </div>
-
-    </div>
 
     <!-- ── Add / Edit Goal Modal ──────────────────────────────── -->
     <Transition name="modal">
@@ -479,7 +408,7 @@ function showToast(msg) {
 
 /* Summary */
 .summary-grid {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-lg);
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-lg);
 }
 @media (max-width: 700px) { .summary-grid { grid-template-columns: 1fr; } }
 .summary-card { display: flex; align-items: center; gap: var(--space-md); }
@@ -524,28 +453,7 @@ function showToast(msg) {
   border-radius: var(--r-lg);
 }
 
-/* Insight row */
-.insight-row {
-  display: grid; grid-template-columns: 2fr 1fr; gap: var(--space-lg);
-}
-@media (max-width: 900px) { .insight-row { grid-template-columns: 1fr; } }
 
-.insight-card { position: relative; overflow: hidden; }
-
-/* Dark forecast card */
-.forecast-dark-card {
-  background: var(--col-primary);
-  border-radius: var(--r-lg);
-  padding: var(--space-lg);
-  display: flex; flex-direction: column; gap: var(--space-md);
-}
-.forecast-goals-mini { display: flex; flex-direction: column; gap: 8px; margin-top: var(--space-sm); }
-.mini-goal-row {
-  display: flex; align-items: center; gap: 8px;
-  padding: 6px 10px;
-  background: rgba(255,255,255,0.08);
-  border-radius: var(--r-md);
-}
 
 /* Modal */
 .modal-overlay {

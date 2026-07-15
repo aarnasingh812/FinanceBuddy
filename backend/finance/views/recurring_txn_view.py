@@ -19,8 +19,8 @@ class RecurringTransactionView(APIView):
 
         # Read from MLResult (precomputed via POST /ml/compute)
         ml_result = MLResult.objects.filter(
-            user=user, feature='recurring', status=True
-        ).first()
+            user=user, feature='recurring'
+        ).order_by('-computed_at').first()
 
         if ml_result is None:
             response_data = {

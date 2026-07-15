@@ -16,7 +16,7 @@ from finance.views.ml_compute_status_view import MLComputeStatusView
 
 
 urlpatterns = [
-    path('register/', RegisterView.as_view(), name="register"),
+    path('register', RegisterView.as_view(), name="register"),
     path('login', LoginView.as_view(), name="login"),
     path('logout', LogoutView.as_view(), name="logout"),
     path('dashboard', DashboardView.as_view(), name="dashboard"),
@@ -31,7 +31,7 @@ urlpatterns = [
     path('recommendations', RecommendationView.as_view(), name="recommendations"),
     path('ml/compute', MLComputeView.as_view(), name="ml_compute"),
     path('ml/compute/status/<str:task_id>', MLComputeStatusView.as_view(), name="ml_compute_status"),
-   # path('generate-report', export_transactions, name="export_transactions"),
+   
     
 ]
 

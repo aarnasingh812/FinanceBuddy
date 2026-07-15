@@ -15,8 +15,8 @@ class RecommendationView(APIView):
 
         # Read from MLResult (precomputed via POST /ml/compute)
         ml_result = MLResult.objects.filter(
-            user=user, feature='recommendation', status=True
-        ).first()
+            user=user, feature='recommendation'
+        ).order_by('-computed_at').first()
 
         if ml_result is None:
             response_data = {

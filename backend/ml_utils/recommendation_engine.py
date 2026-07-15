@@ -1,10 +1,10 @@
 import logging
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from statistics import mean
 
 from finance.models import Transaction, Goal, User
-from ml_utils.recurring_detector import detect_recurring_transactions
+#from ml_utils.recurring_detector import detect_recurring_transactions
 from ml_utils.anomaly_detector import detect_anomalies
 from ml_utils.goal_forecaster import forecast_goals
 from ml_utils.llm_client import generate_narrative
@@ -25,22 +25,55 @@ DISCRETIONARY_CATEGORIES = [
 CUT_PERCENT = 10          # suggest cutting discretionary by 10 %
 MIN_CATEGORY_SPEND = 500  # ignore categories below this monthly avg
 
+RECURRING_BUCKET_KEYS = ("15_days", "30_days", "90_days")
+ANOMALY_PERIOD_KEYS = ("current_month", "last_3_months")
+PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
 
 # ---------------------------------------------------------------------------
 # Helpers — Spending Analysis
 # ---------------------------------------------------------------------------
 
-def _compute_category_monthly_spend(user_id):
-   
-    today = date.today()
-    current_ym = (today.year, today.month)
+def _category_trend(monthly_map, sorted_months):
+    """Compare the most recent month to the average of prior months."""
+    if len(sorted_months) < 3:
+        return "stable"
 
-    txns = list(
-        Transaction.objects
-        .filter(user_id=user_id)
-        .order_by("date")
-        .values("amount", "date", "transaction_type", "category")
-    )
+    recent = monthly_map[sorted_months[-1]]
+    prior_avg = mean(monthly_map[k] for k in sorted_months[:-1])
+    if prior_avg <= 0:
+        return "stable"
+
+    change = (recent - prior_avg) / prior_avg
+    if change > 0.15:
+        return "rising"
+    if change < -0.15:
+        return "falling"
+    return "stable"
+
+
+def _compute_category_monthly_spend(user_id):
+    today = date.today()
+    last_month_end = date(today.year, today.month, 1) - timedelta(days=1)
+    current_ym = (last_month_end.year, last_month_end.month)
+
+    start_date = date(today.year - 1, today.month, 1)
+    has_older_data = Transaction.objects.filter(user_id=user_id, date__lt=start_date).exists()
+
+    if has_older_data:
+        txns = list(
+            Transaction.objects
+            .filter(user_id=user_id, date__range=(start_date, last_month_end))
+            .order_by("date")
+            .values("amount", "date", "transaction_type", "category")
+        )
+    else:
+        txns = list(
+            Transaction.objects
+            .filter(user_id=user_id, date__lte=last_month_end)
+            .order_by("date")
+            .values("amount", "date", "transaction_type", "category")
+        )
 
     if not txns:
         return {}, {}
@@ -63,27 +96,13 @@ def _compute_category_monthly_spend(user_id):
     cat_stats = {}
     for cat, monthly_map in cat_monthly.items():
         totals = list(monthly_map.values())
-        avg_m = mean(totals) if totals else 0.0
-        cur_m = monthly_map.get(current_ym, 0.0)
-
-        # Trend: compare last month to average of prior months
         sorted_months = sorted(monthly_map.keys())
-        if len(sorted_months) >= 3:
-            recent = monthly_map[sorted_months[-1]]
-            prior_avg = mean([monthly_map[k] for k in sorted_months[:-1]])
-            if prior_avg > 0:
-                change = (recent - prior_avg) / prior_avg
-                trend = "rising" if change > 0.15 else ("falling" if change < -0.15 else "stable")
-            else:
-                trend = "stable"
-        else:
-            trend = "stable"
 
         cat_stats[cat] = {
             "monthly_totals": dict(monthly_map),
-            "avg_monthly": round(avg_m, 2),
-            "current_month": round(cur_m, 2),
-            "trend": trend,
+            "avg_monthly": round(mean(totals) if totals else 0.0, 2),
+            "current_month": round(monthly_map.get(current_ym, 0.0), 2),
+            "trend": _category_trend(monthly_map, sorted_months),
             "total": round(sum(totals), 2),
         }
 
@@ -103,6 +122,11 @@ def _is_discretionary(category):
     return category.strip().lower() in DISCRETIONARY_CATEGORIES
 
 
+def _sort_by_savings_desc(recs):
+    recs.sort(key=lambda r: r["estimated_monthly_savings"], reverse=True)
+    return recs
+
+
 # ---------------------------------------------------------------------------
 # Recommendation generators (each returns a list of rec dicts)
 # ---------------------------------------------------------------------------
@@ -113,34 +137,30 @@ def _subscription_recommendations(recurring_data):
     if not recurring_data:
         return recs
 
-    for bucket_key in ("15_days", "30_days", "90_days"):
-        patterns = recurring_data.get(bucket_key)
-        if not patterns:
-            continue
-        for p in patterns:
+    for bucket_key in RECURRING_BUCKET_KEYS:
+        for p in recurring_data.get(bucket_key) or []:
             rtype = p.get("recurring_type", "")
-            if rtype in ("Subscription", "Bill"):
-                amt = float(p["amount"])
-                # Normalise to monthly
-                gap = p.get("mean_gap_days", 30)
-                monthly_cost = round(amt * (30 / max(gap, 1)), 2)
+            if rtype not in ("Subscription", "Bill"):
+                continue
 
-                recs.append({
-                    "type": "subscription_review",
-                    "title": f"Review '{p['title']}' subscription",
-                    "detail": (
-                        f"You're paying {amt:.2f} every ~{gap:.0f} days for "
-                        f"'{p['title']}'. That's approximately {monthly_cost:.2f}/month. "
-                        f"If you no longer need it, cancelling could save you "
-                        f"{monthly_cost:.2f} per month."
-                    ),
-                    "estimated_monthly_savings": monthly_cost,
-                    "priority": "high" if monthly_cost >= 500 else "medium",
-                })
+            amt = float(p["amount"])
+            gap = p.get("mean_gap_days", 30)
+            monthly_cost = round(amt * (30 / max(gap, 1)), 2)  # normalise to monthly
 
-    # Sort by savings descending
-    recs.sort(key=lambda r: r["estimated_monthly_savings"], reverse=True)
-    return recs
+            recs.append({
+                "type": "subscription_review",
+                "title": f"Review '{p['title']}' subscription",
+                "detail": (
+                    f"You're paying {amt:.2f} every ~{gap:.0f} days for "
+                    f"'{p['title']}'. That's approximately {monthly_cost:.2f}/month. "
+                    f"If you no longer need it, cancelling could save you "
+                    f"{monthly_cost:.2f} per month."
+                ),
+                "estimated_monthly_savings": monthly_cost,
+                "priority": "high" if monthly_cost >= 500 else "medium",
+            })
+
+    return _sort_by_savings_desc(recs)
 
 
 def _anomaly_based_recommendations(anomaly_data, cat_stats):
@@ -150,31 +170,32 @@ def _anomaly_based_recommendations(anomaly_data, cat_stats):
         return recs
 
     # Collect categories that triggered anomalies
-    flagged_categories = defaultdict(float)
-    for period in ("current_month", "last_3_months"):
-        anomalies = anomaly_data.get(period)
-        if not anomalies:
-            continue
-        for a in anomalies:
+    flagged_categories = set()
+    for period in ANOMALY_PERIOD_KEYS:
+        for a in anomaly_data.get(period) or []:
             cat = a.get("category", "")
-            flagged_categories[cat] += float(a.get("amount", 0))
+            if cat:
+                flagged_categories.add(cat)
 
-    for cat, total_flagged in sorted(flagged_categories.items(), key=lambda x: -x[1]):
+    for cat in flagged_categories:
         stats = cat_stats.get(cat, {})
         avg = stats.get("avg_monthly", 0)
+        current = stats.get("current_month", 0)
+
         if avg < MIN_CATEGORY_SPEND:
             continue
 
-        excess = round(total_flagged - avg, 2) if total_flagged > avg else 0
+        # Compare this month's spend against the monthly average
+        excess = round(current - avg, 2) if current > avg else 0
         if excess > 0:
             recs.append({
                 "type": "anomaly_reduction",
                 "title": f"Unusual spending in '{cat}'",
                 "detail": (
-                    f"Your recent anomalous transactions in '{cat}' totalled "
-                    f"{total_flagged:.2f}, which is {excess:.2f} above your "
-                    f"monthly average of {avg:.2f}. Keeping '{cat}' spending "
-                    f"closer to average could save ~{excess:.2f}."
+                    f"You are spending more on '{cat}' — last month you spent "
+                    f"{current:.2f}, which is {excess:.2f} above your monthly "
+                    f"average of {avg:.2f}. Try to reduce your '{cat}' spending "
+                    f"closer to average this month to save ~{excess:.2f}."
                 ),
                 "estimated_monthly_savings": excess,
                 "priority": "high" if excess >= 1000 else "medium",
@@ -184,28 +205,34 @@ def _anomaly_based_recommendations(anomaly_data, cat_stats):
 
 
 def _discretionary_cut_recommendations(cat_stats):
-    """Suggest a percentage cut in top discretionary categories."""
+    """Suggest a percentage cut in top discretionary categories based on
+    current month spend vs monthly average."""
+    discretionary_cats = [
+        (cat, stats) for cat, stats in cat_stats.items()
+        if _is_discretionary(cat) and stats["avg_monthly"] >= MIN_CATEGORY_SPEND
+    ]
+    # Sort by current month spend so the most active categories surface first
+    discretionary_cats.sort(key=lambda x: -x[1]["current_month"])
+
     recs = []
-    discretionary_cats = []
-
-    for cat, stats in cat_stats.items():
-        if _is_discretionary(cat) and stats["avg_monthly"] >= MIN_CATEGORY_SPEND:
-            discretionary_cats.append((cat, stats))
-
-    # Sort by avg_monthly descending
-    discretionary_cats.sort(key=lambda x: -x[1]["avg_monthly"])
-
-    # Take top 3
     for cat, stats in discretionary_cats[:3]:
         avg = stats["avg_monthly"]
-        saving = round(avg * CUT_PERCENT / 100, 2)
+        current = stats["current_month"]
+
+        # Only recommend a cut when spending this month exceeds the average
+        if current <= avg:
+            continue
+
+        saving = round(current * CUT_PERCENT / 100, 2)
+        excess = round(current - avg, 2)
         recs.append({
             "type": "discretionary_cut",
             "title": f"Reduce '{cat}' spending by {CUT_PERCENT}%",
             "detail": (
-                f"You spend an average of {avg:.2f}/month on '{cat}'. "
-                f"A {CUT_PERCENT}% reduction would save {saving:.2f}/month "
-                f"without drastically changing your lifestyle."
+                f"You are spending more on '{cat}' — last month you spent "
+                f"{current:.2f}, which is {excess:.2f} above your monthly "
+                f"average of {avg:.2f}. Try to reduce it by {CUT_PERCENT}% "
+                f"this month to save {saving:.2f}."
             ),
             "estimated_monthly_savings": saving,
             "priority": "medium",
@@ -218,25 +245,42 @@ def _trend_based_recommendations(cat_stats, overall):
     """Flag categories with rising spend trends."""
     recs = []
     for cat, stats in cat_stats.items():
-        if stats["trend"] == "rising" and stats["avg_monthly"] >= MIN_CATEGORY_SPEND:
-            cur = stats["current_month"]
-            avg = stats["avg_monthly"]
-            excess = round(cur - avg, 2)
-            if excess > 0:
-                recs.append({
-                    "type": "rising_trend",
-                    "title": f"'{cat}' spending is rising",
-                    "detail": (
-                        f"Your '{cat}' spending this month ({cur:.2f}) is above "
-                        f"your average ({avg:.2f}). This category has been trending "
-                        f"upward. Bringing it back to average saves {excess:.2f}/month."
-                    ),
-                    "estimated_monthly_savings": excess,
-                    "priority": "medium" if excess < 1000 else "high",
-                })
+        if stats["trend"] != "rising" or stats["avg_monthly"] < MIN_CATEGORY_SPEND:
+            continue
 
-    recs.sort(key=lambda r: r["estimated_monthly_savings"], reverse=True)
-    return recs
+        cur = stats["current_month"]
+        avg = stats["avg_monthly"]
+        excess = round(cur - avg, 2)
+        if excess > 0:
+            recs.append({
+                "type": "rising_trend",
+                "title": f"'{cat}' spending is rising",
+                "detail": (
+                    f"You are spending more on '{cat}' — last month you spent "
+                    f"{cur:.2f} vs your average of {avg:.2f}. This category has "
+                    f"been trending upward. Try to reduce it back to average "
+                    f"to save {excess:.2f}/month."
+                ),
+                "estimated_monthly_savings": excess,
+                "priority": "medium" if excess < 1000 else "high",
+            })
+
+    return _sort_by_savings_desc(recs)
+
+
+def _dedupe_and_sort_recs(savings_recs):
+    """Keep the highest-savings rec per title, then order by priority
+    (high first), then by savings within each priority.
+    """
+    seen_titles = set()
+    deduped = []
+    for r in sorted(savings_recs, key=lambda x: -x["estimated_monthly_savings"]):
+        if r["title"] not in seen_titles:
+            seen_titles.add(r["title"])
+            deduped.append(r)
+
+    deduped.sort(key=lambda r: (PRIORITY_ORDER.get(r["priority"], 3), -r["estimated_monthly_savings"]))
+    return deduped
 
 
 # ---------------------------------------------------------------------------
@@ -248,30 +292,24 @@ def _build_spend_optimization(cat_stats, overall):
     if not cat_stats:
         return None
 
-    # Top spending categories
     sorted_cats = sorted(cat_stats.items(), key=lambda x: -x[1]["avg_monthly"])
+
     top_categories = []
     for cat, stats in sorted_cats[:5]:
-        cur = stats["current_month"]
-        avg = stats["avg_monthly"]
-        if avg > 0:
-            mom_change = round(((cur - avg) / avg) * 100, 1)
-        else:
-            mom_change = 0.0
-
+        cur, avg = stats["current_month"], stats["avg_monthly"]
+        mom_change = round(((cur - avg) / avg) * 100, 1) if avg > 0 else 0.0
         top_categories.append({
             "category": cat,
-            "avg_monthly_spend": stats["avg_monthly"],
-            "current_month_spend": stats["current_month"],
+            "avg_monthly_spend": avg,
+            "current_month_spend": cur,
             "month_over_month_change_percent": mom_change,
             "trend": stats["trend"],
         })
 
-    # Rising categories
     rising = [
-        {"category": cat, "avg_monthly": s["avg_monthly"],
-         "current_month": s["current_month"]}
-        for cat, s in sorted_cats if s["trend"] == "rising" and s["avg_monthly"] >= MIN_CATEGORY_SPEND
+        {"category": cat, "avg_monthly": s["avg_monthly"], "current_month": s["current_month"]}
+        for cat, s in sorted_cats
+        if s["trend"] == "rising" and s["avg_monthly"] >= MIN_CATEGORY_SPEND
     ]
 
     return {
@@ -284,8 +322,161 @@ def _build_spend_optimization(cat_stats, overall):
 
 
 # ---------------------------------------------------------------------------
-# Goal Insights
+# Goal Insights — one narrative builder per goal status
 # ---------------------------------------------------------------------------
+
+def _insight_achieved(goal_name, target):
+    insight = (
+        f"Congratulations! You've achieved your '{goal_name}' goal! "
+        f"Target of {target:.2f} has been met."
+    )
+    action_items = ["Consider setting a new, bigger goal to keep your momentum going."]
+    return insight, action_items, None
+
+
+def _insight_on_track(goal_name, target, predicted, allocated, progress, trend):
+    insight = (
+        f"You're on track to reach '{goal_name}' "
+        f"(target: {target:.2f}) by {predicted}. "
+        f"Keep saving {allocated:.2f}/month. "
+        f"You've already covered {progress:.1f}% of this goal."
+    )
+    action_items = []
+    if trend == "increasing":
+        action_items.append(
+            "Your savings trend is increasing — you might hit this goal even earlier."
+        )
+    action_items.append(f"Continue your current savings habit of {allocated:.2f}/month.")
+    return insight, action_items, None
+
+
+def _insight_at_risk(goal_name, required, allocated, progress, remaining, months_rem, total_potential):
+    shortfall = round(required - allocated, 2)
+    insight = (
+        f"'{goal_name}' is at risk. You need {required:.2f}/month "
+        f"but only {allocated:.2f}/month is allocated "
+        f"(shortfall: {shortfall:.2f}/month). "
+        f"You've completed {progress:.1f}% so far with {remaining:.2f} remaining."
+    )
+
+    action_items = []
+    if total_potential >= shortfall:
+        action_items.append(
+            f"Following our savings recommendations could free up "
+            f"{total_potential:.2f}/month — enough to cover the shortfall."
+        )
+    else:
+        action_items.append(
+            f"Try to increase your monthly savings by {shortfall:.2f} "
+            f"through expense cuts or additional income."
+        )
+    if months_rem > 0:
+        action_items.append(
+            f"You have {months_rem} months left. Every month of delay "
+            f"increases the required monthly savings."
+        )
+    return insight, action_items, None
+
+
+def _insight_off_track(goal_name, target, remaining, progress, months_rem,
+                        allocated, avg_savings, required, total_potential):
+    if allocated > 0 and remaining > 0:
+        months_needed = round(remaining / allocated)
+        extra_time = max(0, months_needed - months_rem)
+        insight = (
+            f"'{goal_name}' won't be met by its deadline. "
+            f"At the current allocated rate of {allocated:.2f}/month, "
+            f"it will take approximately {months_needed} months "
+            f"({extra_time} months beyond the deadline). "
+            f"Progress: {progress:.1f}%, remaining: {remaining:.2f}."
+        )
+    elif avg_savings <= 0:
+        extra_time = None
+        insight = (
+            f"'{goal_name}' is off track because your net savings are "
+            f"currently negative or zero. You need a positive savings "
+            f"rate to make progress. Remaining: {remaining:.2f}."
+        )
+    else:
+        months_needed = round(remaining / avg_savings)
+        extra_time = max(0, months_needed - months_rem) if months_rem > 0 else months_needed
+        insight = (
+            f"'{goal_name}' is off track. At your average savings rate "
+            f"of {avg_savings:.2f}/month, it would take ~{months_needed} months. "
+            f"Deadline is in {months_rem} months. Remaining: {remaining:.2f}."
+        )
+
+    action_items = []
+    if total_potential > 0:
+        boosted_monthly = allocated + total_potential
+        if boosted_monthly > 0:
+            boosted_months = round(remaining / boosted_monthly)
+            action_items.append(
+                f"By implementing all savings recommendations "
+                f"(+{total_potential:.2f}/month), you could bring the timeline "
+                f"down to ~{boosted_months} months."
+            )
+    action_items.append(
+        f"Consider extending the deadline or reducing the target amount "
+        f"from {target:.2f} to a more achievable level."
+    )
+    if required > 0:
+        action_items.append(f"To stay on deadline, you would need {required:.2f}/month.")
+
+    return insight, action_items, extra_time
+
+
+def _insight_deadline_passed(goal_name, remaining, target, progress, avg_savings):
+    insight = (
+        f"The deadline for '{goal_name}' has passed. "
+        f"You still need {remaining:.2f} to reach the target of {target:.2f} "
+        f"({progress:.1f}% completed). "
+    )
+    action_items = []
+    if avg_savings > 0:
+        months_to_finish = round(remaining / avg_savings)
+        insight += f"At your current savings rate, it would take ~{months_to_finish} more months."
+        action_items.append(
+            f"Set a new deadline {months_to_finish} months from now to stay motivated."
+        )
+    else:
+        action_items.append(
+            "Focus on building a positive savings rate first, then set a new deadline."
+        )
+    return insight, action_items, None
+
+
+def _build_goal_insight(f, avg_savings, trend, total_potential):
+    """Dispatch to the right narrative builder based on the goal's status.
+
+    Returns (insight, action_items, extra_time_needed_months).
+    """
+    status = f["status"]
+    goal_name = f["goal_name"]
+    target = f["target_amount"]
+    remaining = f["remaining_amount"]
+    progress = f["progress_percent"]
+    months_rem = f["months_remaining"]
+    allocated = f.get("allocated_monthly_savings", 0)
+    required = f.get("required_monthly_savings", 0)
+    predicted = f.get("predicted_achievement_date")
+
+    if status == "achieved":
+        return _insight_achieved(goal_name, target)
+    if status == "on_track":
+        return _insight_on_track(goal_name, target, predicted, allocated, progress, trend)
+    if status == "at_risk":
+        return _insight_at_risk(goal_name, required, allocated, progress, remaining, months_rem, total_potential)
+    if status == "off_track":
+        return _insight_off_track(
+            goal_name, target, remaining, progress, months_rem,
+            allocated, avg_savings, required, total_potential,
+        )
+    if status == "deadline_passed":
+        return _insight_deadline_passed(goal_name, remaining, target, progress, avg_savings)
+
+    return f"'{goal_name}': Status unknown.", [], None
+
 
 def _build_goal_insights(forecast_data, savings_recs):
     """Generate personalised natural-language insights for each goal."""
@@ -303,142 +494,16 @@ def _build_goal_insights(forecast_data, savings_recs):
     achievable = allocation.get("achievable_goals", 0)
     total_goals = allocation.get("total_goals", 0)
 
-    # Total potential savings from all recommendations
     total_potential = sum(r.get("estimated_monthly_savings", 0) for r in savings_recs)
 
     insights = []
     for f in forecasts:
-        goal_name = f["goal_name"]
-        status = f["status"]
-        target = f["target_amount"]
-        remaining = f["remaining_amount"]
-        progress = f["progress_percent"]
-        months_rem = f["months_remaining"]
-        allocated = f.get("allocated_monthly_savings", 0)
-        required = f.get("required_monthly_savings", 0)
-        predicted = f.get("predicted_achievement_date")
-
-        action_items = []
-        extra_time = None
-
-        if status == "achieved":
-            insight = (
-                f"Congratulations! You've achieved your '{goal_name}' goal! "
-                f"Target of {target:.2f} has been met."
-            )
-            action_items.append(f"Consider setting a new, bigger goal to keep your momentum going.")
-
-        elif status == "on_track":
-            insight = (
-                f"You're on track to reach '{goal_name}' "
-                f"(target: {target:.2f}) by {predicted}. "
-                f"Keep saving {allocated:.2f}/month. "
-                f"You've already covered {progress:.1f}% of this goal."
-            )
-            if trend == "increasing":
-                action_items.append(
-                    f"Your savings trend is increasing — you might hit this goal even earlier."
-                )
-            action_items.append(f"Continue your current savings habit of {allocated:.2f}/month.")
-
-        elif status == "at_risk":
-            shortfall = round(required - allocated, 2)
-            insight = (
-                f"'{goal_name}' is at risk. You need {required:.2f}/month "
-                f"but only {allocated:.2f}/month is allocated "
-                f"(shortfall: {shortfall:.2f}/month). "
-                f"You've completed {progress:.1f}% so far with {remaining:.2f} remaining."
-            )
-            if total_potential >= shortfall:
-                action_items.append(
-                    f"Following our savings recommendations could free up "
-                    f"{total_potential:.2f}/month — enough to cover the shortfall."
-                )
-            else:
-                action_items.append(
-                    f"Try to increase your monthly savings by {shortfall:.2f} "
-                    f"through expense cuts or additional income."
-                )
-            if months_rem > 0:
-                action_items.append(
-                    f"You have {months_rem} months left. Every month of delay "
-                    f"increases the required monthly savings."
-                )
-
-        elif status == "off_track":
-            if allocated > 0 and remaining > 0:
-                months_needed = round(remaining / allocated)
-                extra_time = max(0, months_needed - months_rem)
-                insight = (
-                    f"'{goal_name}' won't be met by its deadline. "
-                    f"At the current allocated rate of {allocated:.2f}/month, "
-                    f"it will take approximately {months_needed} months "
-                    f"({extra_time} months beyond the deadline). "
-                    f"Progress: {progress:.1f}%, remaining: {remaining:.2f}."
-                )
-            elif avg_savings <= 0:
-                extra_time = None
-                insight = (
-                    f"'{goal_name}' is off track because your net savings are "
-                    f"currently negative or zero. You need a positive savings "
-                    f"rate to make progress. Remaining: {remaining:.2f}."
-                )
-            else:
-                months_needed = round(remaining / avg_savings) if avg_savings > 0 else 0
-                extra_time = max(0, months_needed - months_rem) if months_rem > 0 else months_needed
-                insight = (
-                    f"'{goal_name}' is off track. At your average savings rate "
-                    f"of {avg_savings:.2f}/month, it would take ~{months_needed} months. "
-                    f"Deadline is in {months_rem} months. Remaining: {remaining:.2f}."
-                )
-
-            if total_potential > 0:
-                boosted_monthly = allocated + total_potential
-                if boosted_monthly > 0:
-                    boosted_months = round(remaining / boosted_monthly)
-                    action_items.append(
-                        f"By implementing all savings recommendations "
-                        f"(+{total_potential:.2f}/month), you could bring the timeline "
-                        f"down to ~{boosted_months} months."
-                    )
-            action_items.append(
-                f"Consider extending the deadline or reducing the target amount "
-                f"from {target:.2f} to a more achievable level."
-            )
-            if required > 0:
-                action_items.append(
-                    f"To stay on deadline, you would need {required:.2f}/month."
-                )
-
-        elif status == "deadline_passed":
-            extra_time = None
-            insight = (
-                f"The deadline for '{goal_name}' has passed. "
-                f"You still need {remaining:.2f} to reach the target of {target:.2f} "
-                f"({progress:.1f}% completed). "
-            )
-            if avg_savings > 0:
-                months_to_finish = round(remaining / avg_savings)
-                insight += (
-                    f"At your current savings rate, it would take ~{months_to_finish} "
-                    f"more months."
-                )
-                action_items.append(
-                    f"Set a new deadline {months_to_finish} months from now to stay motivated."
-                )
-            else:
-                action_items.append(
-                    "Focus on building a positive savings rate first, then set a new deadline."
-                )
-
-        else:
-            insight = f"'{goal_name}': Status unknown."
-
+        insight, action_items, extra_time = _build_goal_insight(f, avg_savings, trend, total_potential)
         insights.append({
             "goal_id": f["goal_id"],
-            "goal_name": goal_name,
-            "status": status,
-            "progress_percent": progress,
+            "goal_name": f["goal_name"],
+            "status": f["status"],
+            "progress_percent": f["progress_percent"],
             "insight": insight,
             "action_items": action_items if action_items else None,
             "extra_time_needed_months": extra_time,
@@ -476,6 +541,60 @@ def _build_goal_insights(forecast_data, savings_recs):
 # LLM Context Assembly
 # ---------------------------------------------------------------------------
 
+def _get_user_profile(user_id):
+    """Return (username, account_age_months), falling back gracefully if
+    the user can't be found.
+    """
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return "User", 0
+
+    today = date.today()
+    account_age_months = (
+        (today.year - user.created_at.year) * 12 + (today.month - user.created_at.month)
+    )
+    return user.username, account_age_months
+
+
+def _flatten_anomaly_summary(anomaly_data):
+    """Reduce anomaly data to just the fields the LLM prompt needs."""
+    if not anomaly_data or anomaly_data.get("insufficient_data"):
+        return None
+
+    summary = {}
+    for period in ANOMALY_PERIOD_KEYS:
+        items = anomaly_data.get(period)
+        if items:
+            summary[period] = [
+                {
+                    "title": a.get("title", ""),
+                    "amount": a.get("amount", 0),
+                    "category": a.get("category", ""),
+                    "anomaly_score": a.get("anomaly_score", 0),
+                }
+                for a in items
+            ]
+    return summary
+
+
+def _flatten_recurring_summary(recurring_data):
+    """Reduce recurring-pattern data to just the fields the LLM prompt needs."""
+    if not recurring_data:
+        return None
+
+    summary = []
+    for bucket_key in RECURRING_BUCKET_KEYS:
+        for p in recurring_data.get(bucket_key) or []:
+            summary.append({
+                "title": p.get("title", ""),
+                "amount": float(p.get("amount", 0)),
+                "mean_gap_days": p.get("mean_gap_days", 30),
+                "recurring_type": p.get("recurring_type", "unknown"),
+            })
+    return summary
+
+
 def _build_llm_context(user_id, cat_stats, overall, savings_recs,
                        spend_opt, forecast_data, anomaly_data,
                        recurring_data):
@@ -486,52 +605,7 @@ def _build_llm_context(user_id, cat_stats, overall, savings_recs,
     every piece of data the LLM needs is collected here so the prompt
     builder doesn't touch Django models or ML utilities directly.
     """
-    # --- User profile ---
-    try:
-        user = User.objects.get(id=user_id)
-        username = user.username
-        account_age_months = (
-            (date.today().year - user.created_at.year) * 12
-            + (date.today().month - user.created_at.month)
-        )
-    except User.DoesNotExist:
-        username = "User"
-        account_age_months = 0
-
-    # --- Anomaly summary (flatten to key info only) ---
-    anomaly_summary = None
-    if anomaly_data and not anomaly_data.get("insufficient_data"):
-        anomaly_summary = {}
-        for period in ("current_month", "last_3_months"):
-            items = anomaly_data.get(period)
-            if items:
-                anomaly_summary[period] = [
-                    {
-                        "title": a.get("title", ""),
-                        "amount": a.get("amount", 0),
-                        "category": a.get("category", ""),
-                        "anomaly_score": a.get("anomaly_score", 0),
-                    }
-                    for a in items
-                ]
-
-    # --- Recurring summary (flatten) ---
-    recurring_summary = None
-    if recurring_data:
-        recurring_summary = []
-        for bucket_key in ("15_days", "30_days", "90_days"):
-            patterns = recurring_data.get(bucket_key)
-            if not patterns:
-                continue
-            for p in patterns:
-                recurring_summary.append({
-                    "title": p.get("title", ""),
-                    "amount": float(p.get("amount", 0)),
-                    "mean_gap_days": p.get("mean_gap_days", 30),
-                    "recurring_type": p.get("recurring_type", "unknown"),
-                })
-
-    # --- Total potential savings ---
+    username, account_age_months = _get_user_profile(user_id)
     total_potential = sum(r.get("estimated_monthly_savings", 0) for r in savings_recs)
 
     return {
@@ -545,8 +619,8 @@ def _build_llm_context(user_id, cat_stats, overall, savings_recs,
         "total_potential_savings": round(total_potential, 2),
         "spend_optimization": spend_opt,
         "goal_forecasts": forecast_data,
-        "anomaly_summary": anomaly_summary,
-        "recurring_summary": recurring_summary,
+        "anomaly_summary": _flatten_anomaly_summary(anomaly_data),
+        "recurring_summary": _flatten_recurring_summary(recurring_data),
     }
 
 
@@ -554,10 +628,18 @@ def _build_llm_context(user_id, cat_stats, overall, savings_recs,
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def generate_recommendations(user_id: int):
+def generate_recommendations(user_id: int, *, recurring_data=None,
+                              anomaly_data=None, forecast_data=None):
     """
     Generate personalised recommendations and insights for the user
     by synthesising outputs from all ML engines.
+
+    Parameters
+    ----------
+    recurring_data, anomaly_data, forecast_data : dict, optional
+        Pre-computed results from the other ML engines.  When supplied
+        the corresponding engine is **not** re-invoked, avoiding
+        duplicate work when the caller has already run them.
 
     Returns
     -------
@@ -565,10 +647,13 @@ def generate_recommendations(user_id: int):
     or None if no transaction data exists.
     """
 
-    # 1. Gather data from existing engines
-    recurring_data = detect_recurring_transactions(user_id)
-    anomaly_data = detect_anomalies(user_id)
-    forecast_data = forecast_goals(user_id)
+    # 1. Gather data from existing engines (skip if already provided)
+    # if recurring_data is None:
+    #     recurring_data = detect_recurring_transactions(user_id)
+    if anomaly_data is None:
+        anomaly_data = detect_anomalies(user_id)
+    if forecast_data is None:
+        forecast_data = forecast_goals(user_id)
 
     # 2. Compute category-level spending analysis
     cat_stats, overall = _compute_category_monthly_spend(user_id)
@@ -582,24 +667,8 @@ def generate_recommendations(user_id: int):
     savings_recs.extend(_anomaly_based_recommendations(anomaly_data, cat_stats))
     savings_recs.extend(_discretionary_cut_recommendations(cat_stats))
     savings_recs.extend(_trend_based_recommendations(cat_stats, overall))
+    savings_recs = _dedupe_and_sort_recs(savings_recs)
 
-    # Deduplicate by category (keep highest savings)
-    seen_cats = set()
-    deduped = []
-    for r in sorted(savings_recs, key=lambda x: -x["estimated_monthly_savings"]):
-        # Use title as dedup key
-        if r["title"] not in seen_cats:
-            seen_cats.add(r["title"])
-            deduped.append(r)
-    savings_recs = deduped
-
-    # Re-sort: high priority first, then by savings
-    priority_order = {"high": 0, "medium": 1, "low": 2}
-    savings_recs.sort(
-        key=lambda r: (priority_order.get(r["priority"], 3), -r["estimated_monthly_savings"])
-    )
-
-    # Compute total potential savings
     total_potential = sum(r["estimated_monthly_savings"] for r in savings_recs)
 
     # 4. Build spend optimization section
