@@ -91,7 +91,7 @@
         <!-- ── Metric cards ───────────────────────────────── -->
         <section class="metrics-grid">
           <MetricCard
-            label="Monthly Income"
+            label="This month's Income"
             :value="fmtCurrency(dashboardSummary.total_income)"
             icon="trending_up"
             :delta="fmtDelta(dashboardSummary.income_change_pct)"
@@ -99,7 +99,7 @@
             :delay="0"
           />
           <MetricCard
-            label="Monthly Expenses"
+            label="This month's Expenses"
             :value="fmtCurrency(dashboardSummary.total_expense)"
             icon="trending_down"
             :delta="fmtDelta(dashboardSummary.expense_change_pct)"

@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = 30   # seconds — generous for structured output
 MAX_OUTPUT_TOKENS = 4096
-MODEL_NAME = "qwen/qwen3-8b"
+MODEL_NAME = "openai/gpt-oss-120b"
 
 
 # ---------------------------------------------------------------------------

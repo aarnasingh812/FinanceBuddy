@@ -4,7 +4,7 @@ import time
 
 from celery import shared_task
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date as date_type
+from datetime import date as date_type, timedelta
 
 from celery.utils.log import get_task_logger
 
@@ -16,7 +16,7 @@ def run_ml_compute(self, user_id: int) -> dict:
     
     # Import inside task to avoid circular imports and ensure the Django ORM
     # is fully initialised when the worker process calls this function.
-    from finance.models import MLResult, RecurringTransaction, AnomalousTransaction
+    from finance.models import MLResult, RecurringTransaction, AnomalousTransaction, Transaction
     from finance.models.base_models import User
     #from ml_utils.recurring_detector import detect_recurring_transactions
     from ml_utils.anomaly_detector import detect_anomalies
@@ -39,7 +39,7 @@ def run_ml_compute(self, user_id: int) -> dict:
     #    (recurring, anomaly, forecast have no inter-dependencies)
     # ------------------------------------------------------------------
     logger.info(
-        "[ML Compute] Dispatching parallel engines: recurring, anomaly, forecast | user_id=%s",
+        "[ML Compute] Dispatching parallel engines: anomaly, forecast | user_id=%s",
         user_id,
     )
     parallel_start = time.time()
@@ -169,7 +169,25 @@ def run_ml_compute(self, user_id: int) -> dict:
     )
 
     # ------------------------------------------------------------------
-    # 6. Recommendations & Insights (depends on steps 2-5)
+    # 6. Pre-fetch 12-month transaction rows for the recommendation engine
+    #    (eliminates a duplicate DB call in _compute_category_monthly_spend)
+    # ------------------------------------------------------------------
+    today = date_type.today()
+    rec_window_end   = date_type(today.year, today.month, 1) - timedelta(days=1)
+    rec_window_start = date_type(today.year - 1, today.month, 1)
+    rec_transactions = list(
+        Transaction.objects
+        .filter(user=user, date__gte=rec_window_start, date__lte=rec_window_end)
+        .order_by("date")
+        .values("amount", "date", "transaction_type", "category")
+    )
+    logger.info(
+        "[ML Compute] Pre-fetched %d transactions for recommendation engine | user_id=%s",
+        len(rec_transactions), user_id,
+    )
+
+    # ------------------------------------------------------------------
+    # 7. Recommendations & Insights (depends on steps 2-5)
     # ------------------------------------------------------------------
     logger.info("[ML Compute] Computing recommendations | user_id=%s", user_id)
     rec_start = time.time()
@@ -178,6 +196,8 @@ def run_ml_compute(self, user_id: int) -> dict:
         # recurring_data=recurring_raw,
         anomaly_data=anomaly_raw,
         forecast_data=forecast_raw,
+        transactions=rec_transactions,   # avoids duplicate Transaction query
+        user_obj=user,                   # avoids duplicate User.objects.get
     )
     logger.info(
         "[ML Compute] Recommendations complete | user_id=%s elapsed=%.2fs",

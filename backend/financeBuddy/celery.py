@@ -2,8 +2,7 @@
 Celery application instance for the FinanceBuddy project.
 
 Start the worker with:
-    celery -A financeBuddy worker --loglevel=info --pool=solo   # Windows
-    celery -A financeBuddy worker --loglevel=info               # Linux / macOS
+    celery -A financeBuddy worker --loglevel=info --pool=solo 
 """
 
 import os

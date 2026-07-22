@@ -506,20 +506,17 @@ def detect_anomalies(user_id: int) -> dict:
     one_month_ago_key = _month_key(_shift_month_start(current_month_start, -1))
 
     # ------------------------------------------------------------------
-    # Fetch all transactions
+    # Fetch all transactions in a single query, then partition in Python
+    # (avoids two round-trips for the same user/table)
     # ------------------------------------------------------------------
-    all_expenses = list(
+    all_txns = list(
         Transaction.objects
-        .filter(user_id=user_id, transaction_type="Expense")
+        .filter(user_id=user_id)
         .order_by("date")
-        .values("id", "title", "amount", "date", "category")
+        .values("id", "title", "amount", "date", "category", "transaction_type")
     )
-    all_income = list(
-        Transaction.objects
-        .filter(user_id=user_id, transaction_type="Income")
-        .order_by("date")
-        .values("id", "title", "amount", "date", "category")
-    )
+    all_expenses = [t for t in all_txns if t["transaction_type"] == "Expense"]
+    all_income   = [t for t in all_txns if t["transaction_type"] == "Income"]
 
     if len(all_expenses) < MIN_HISTORY_TXNS:
         return {
