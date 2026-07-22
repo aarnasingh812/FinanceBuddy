@@ -1,6 +1,6 @@
 # Finance Buddy 🪙
 
-Finance Buddy is a premium, AI-powered personal finance management and coaching platform. It helps users track transactions, set and monitor financial goals, detect anomalies in spending habits, cluster recurring bills/subscriptions, and receive custom coaching insights.
+Finance Buddy is a premium, AI-powered personal finance management and coaching platform. It helps users track transactions, set and monitor financial goals, detect anomalies in spending habits and receive custom coaching insights.
 
 The core of the application lies in its asynchronous machine learning pipeline. It runs statistical and ML models (like **Local Outlier Factor (LOF)** and **Ordinary Least Squares (OLS) Linear Regression**) in parallel background tasks, then synthesizes the results into structured prompts to generate tailored AI-coaching narratives using an LLM.
 
@@ -13,8 +13,7 @@ The core of the application lies in its asynchronous machine learning pipeline. 
 4. [Deep Dive: ML Features & Engines](#deep-dive-ml-features--engines)
     - [1. Anomaly Detector](#1-anomaly-detector)
     - [2. Goal Forecaster](#2-goal-forecaster)
-    - [3. Recurring Transaction Detector](#3-recurring-transaction-detector)
-    - [4. AI Recommendation & Insights Engine](#4-ai-recommendation--insights-engine)
+    - [3. AI Recommendation & Insights Engine](#3-ai-recommendation--insights-engine)
 5. [REST API Documentation](#rest-api-documentation)
 6. [Tech Stack](#tech-stack)
 7. [Installation & Setup Guide](#installation--setup-guide)
@@ -91,10 +90,8 @@ The backend utilizes Django models mapped to a **MySQL** database. There are 6 m
    - fields: `user`, `name`, `target_amount`, `deadline`, `status` (`current`, `achieved`, `archive`).
 4. **[AnomalousTransaction](file:///d:/finance/FinanceBuddy/backend/finance/models/anomaly_model.py#L5-L27)**: Tracks anomalous transactions flagged by the ML pipeline.
    - fields: `user`, `transaction` (FK), `anomaly_score` (0.0 to 1.0), `signals` (JSON payload describing trigger reasons), `period` (`current_month` / `last_3_months`), `is_dismissed` (boolean).
-5. **[RecurringTransaction](file:///d:/finance/FinanceBuddy/backend/finance/models/recurring_txn_model.py#L4-L38)**: Holds detected subscription/bill clusters.
-   - fields: `user`, `title`, `amount`, `interval_bucket` (`15_days`, `30_days`, `90_days`), `mean_gap_days`, `confidence` (0.0 to 1.0), `next_expected_date`, `recurring_type` (Rent, Subscription, EMI, Bill, etc.), `occurrences`.
-6. **[MLResult](file:///d:/finance/FinanceBuddy/backend/finance/models/ml_result_model.py#L5-L27)**: A generic JSON repository that caches the results of computation runs.
-   - fields: `user`, `feature` (`recurring`, `anomaly`, `forecast`, `recommendation`), `result` (JSONField), `status` (active/old boolean), `computed_at`.
+5. **[MLResult](file:///d:/finance/FinanceBuddy/backend/finance/models/ml_result_model.py#L5-L27)**: A generic JSON repository that caches the results of computation runs.
+   - fields: `user`, `feature` (`anomaly`, `forecast`, `recommendation`), `result` (JSONField), `status` (active/old boolean), `computed_at`.
 
 ---
 
@@ -224,27 +221,7 @@ flowchart TD
 
 ---
 
-### 3. Recurring Transaction Detector
-
-**Source Code**: [recurring_detector.py](file:///d:/finance/FinanceBuddy/backend/ml_utils/recurring_detector.py)
-
-Clusters historical transaction records to identify systematic, repeating intervals (like rent, salary, utilities, or streaming subscriptions).
-
-#### Mathematical Model:
-*   **Clustering**: Transactions are clustered by matching description tokens (e.g. normalizing `Netflix.com` and `Netflix` to the same stem) and exact decimal `amount`.
-*   **Minimum Threshold**: The cluster must contain $\ge 3$ instances.
-*   **Gap Regularity**: Let $D = [d_1, d_2, \dots, d_n]$ be the sorted dates of the transactions. Gaps between transactions are calculated as $G = [g_1, g_2, \dots, g_{n-1}]$ where $g_i = d_{i+1} - d_i$ in days.
-    The mean gap $\mu_g$ and standard deviation $\sigma_g$ are calculated. Regularity is measured using the **Coefficient of Variation (CV)**:
-    $$CV = \frac{\sigma_g}{\mu_g}$$
-    If $CV > 0.15$ ($15\%$), the cycle is considered too irregular and discarded.
-*   **Interval Bucketing**:
-    - `15_days`: Mean gap is between $10$ and $22$ days.
-    - `30_days`: Mean gap is between $23$ and $60$ days.
-    - `90_days`: Mean gap is between $61$ and $120$ days.
-
----
-
-### 4. AI Recommendation & Insights Engine
+### 3. AI Recommendation & Insights Engine
 
 **Source Codes**: [recommendation_engine.py](file:///d:/finance/FinanceBuddy/backend/ml_utils/recommendation_engine.py), [llm_client.py](file:///d:/finance/FinanceBuddy/backend/ml_utils/llm_client.py), [recommendation_prompt.py](file:///d:/finance/FinanceBuddy/backend/ml_utils/prompts/recommendation_prompt.py)
 
@@ -463,7 +440,6 @@ FinanceBuddy/
 │   └── ml_utils/                 # Analytical & ML engines
 │       ├── anomaly_detector.py   # Statistical anomaly flags & LOF model
 │       ├── goal_forecaster.py    # OLS linear regression & scenario projection
-│       ├── recurring_detector.py # Gap CV check & recurring transaction clusters
 │       ├── recommendation_engine.py # Insight synthesizer & prompt loader
 │       ├── llm_client.py         # LLM API request execution
 │       └── prompts/
