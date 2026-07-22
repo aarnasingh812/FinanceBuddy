@@ -182,5 +182,5 @@ LOGOUT_REDIRECT_URL = 'login'
 # LLM (Groq — Qwen 3-32B) — powers personalised recommendation narratives
 # ---------------------------------------------------------------------------
 GROQ_API_KEY = env("GROQ_API_KEY", default="")
-GROQ_MODEL = "qwen/qwen3-32b"
+GROQ_MODEL = "openai/gpt-oss-120b"
 GROQ_TEMPERATURE = float(env("GROQ_TEMPERATURE", default=0.6))

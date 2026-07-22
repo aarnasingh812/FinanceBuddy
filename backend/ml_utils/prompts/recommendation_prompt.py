@@ -105,7 +105,6 @@ def _fmt(amount) -> str:
 
 
 def build_prompt(context: dict) -> str:
-   
     lines = []
 
     # -- User profile (single line)

@@ -8,7 +8,7 @@
         <p class="t-body text-muted" style="margin-top:4px">
           <template v-if="loading">Loading…</template>
           <template v-else-if="apiError" style="color:var(--col-error)">{{ apiError }}</template>
-          <template v-else>Tracking your journey to financial freedom.</template>
+          <template v-else>Here’s what you’re saving for</template>
         </p>
       </div>
       <button class="btn btn-primary" @click="showAddModal = true">

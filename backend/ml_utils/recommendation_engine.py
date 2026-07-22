@@ -52,25 +52,30 @@ def _category_trend(monthly_map, sorted_months):
     return "stable"
 
 
-def _compute_category_monthly_spend(user_id):
+def _compute_category_monthly_spend(user_id, txns=None):
+    """
+    Aggregate transactions by category and month.
+
+    Parameters
+    ----------
+    user_id : int
+    txns : list[dict] | None
+        Pre-fetched transaction rows (avoids an extra DB call when the
+        caller already has them).  Each dict must have keys:
+        ``amount``, ``date``, ``transaction_type``, ``category``.
+        When *None*, the rows are fetched from the DB directly (fallback
+        for standalone / test usage).
+    """
     today = date.today()
     last_month_end = date(today.year, today.month, 1) - timedelta(days=1)
     current_ym = (last_month_end.year, last_month_end.month)
 
-    start_date = date(today.year - 1, today.month, 1)
-    has_older_data = Transaction.objects.filter(user_id=user_id, date__lt=start_date).exists()
-
-    if has_older_data:
+    if txns is None:
+        # Standalone fallback: single bounded query, no .exists() pre-check.
+        start_date = date(today.year - 1, today.month, 1)
         txns = list(
             Transaction.objects
-            .filter(user_id=user_id, date__range=(start_date, last_month_end))
-            .order_by("date")
-            .values("amount", "date", "transaction_type", "category")
-        )
-    else:
-        txns = list(
-            Transaction.objects
-            .filter(user_id=user_id, date__lte=last_month_end)
+            .filter(user_id=user_id, date__gte=start_date, date__lte=last_month_end)
             .order_by("date")
             .values("amount", "date", "transaction_type", "category")
         )
@@ -541,10 +546,24 @@ def _build_goal_insights(forecast_data, savings_recs):
 # LLM Context Assembly
 # ---------------------------------------------------------------------------
 
-def _get_user_profile(user_id):
-    """Return (username, account_age_months), falling back gracefully if
-    the user can't be found.
+def _get_user_profile(user_id, user_obj=None):
+    """Return (username, account_age_months).
+
+    Parameters
+    ----------
+    user_obj : User | None
+        When supplied (e.g. passed down from the Celery task that already
+        fetched the row) the DB is not hit again.  Falls back to a
+        ``User.objects.get`` lookup when *None*.
     """
+    if user_obj is not None:
+        today = date.today()
+        account_age_months = (
+            (today.year - user_obj.created_at.year) * 12
+            + (today.month - user_obj.created_at.month)
+        )
+        return user_obj.username, account_age_months
+
     try:
         user = User.objects.get(id=user_id)
     except User.DoesNotExist:
@@ -597,7 +616,7 @@ def _flatten_recurring_summary(recurring_data):
 
 def _build_llm_context(user_id, cat_stats, overall, savings_recs,
                        spend_opt, forecast_data, anomaly_data,
-                       recurring_data):
+                       recurring_data, user_obj=None):
     """
     Assemble a structured context dict that feeds the LLM prompt.
 
@@ -605,7 +624,7 @@ def _build_llm_context(user_id, cat_stats, overall, savings_recs,
     every piece of data the LLM needs is collected here so the prompt
     builder doesn't touch Django models or ML utilities directly.
     """
-    username, account_age_months = _get_user_profile(user_id)
+    username, account_age_months = _get_user_profile(user_id, user_obj=user_obj)
     total_potential = sum(r.get("estimated_monthly_savings", 0) for r in savings_recs)
 
     return {
@@ -629,7 +648,8 @@ def _build_llm_context(user_id, cat_stats, overall, savings_recs,
 # ---------------------------------------------------------------------------
 
 def generate_recommendations(user_id: int, *, recurring_data=None,
-                              anomaly_data=None, forecast_data=None):
+                              anomaly_data=None, forecast_data=None,
+                              transactions=None, user_obj=None):
     """
     Generate personalised recommendations and insights for the user
     by synthesising outputs from all ML engines.
@@ -640,6 +660,13 @@ def generate_recommendations(user_id: int, *, recurring_data=None,
         Pre-computed results from the other ML engines.  When supplied
         the corresponding engine is **not** re-invoked, avoiding
         duplicate work when the caller has already run them.
+    transactions : list[dict] | None
+        Pre-fetched 12-month transaction rows (amount, date,
+        transaction_type, category).  When supplied the function
+        skips its own DB query for spending analysis.
+    user_obj : User | None
+        Django User instance.  When supplied the function skips the
+        ``User.objects.get`` call inside ``_get_user_profile``.
 
     Returns
     -------
@@ -656,7 +683,8 @@ def generate_recommendations(user_id: int, *, recurring_data=None,
         forecast_data = forecast_goals(user_id)
 
     # 2. Compute category-level spending analysis
-    cat_stats, overall = _compute_category_monthly_spend(user_id)
+    # Pass pre-fetched transactions when available to avoid a duplicate DB call
+    cat_stats, overall = _compute_category_monthly_spend(user_id, txns=transactions)
 
     if not cat_stats and not forecast_data:
         return None
@@ -683,6 +711,7 @@ def generate_recommendations(user_id: int, *, recurring_data=None,
         llm_context = _build_llm_context(
             user_id, cat_stats, overall, savings_recs,
             spend_opt, forecast_data, anomaly_data, recurring_data,
+            user_obj=user_obj,
         )
         llm_insights = generate_narrative(llm_context)
     except Exception as e:

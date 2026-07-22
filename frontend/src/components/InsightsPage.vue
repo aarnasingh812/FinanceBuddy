@@ -6,7 +6,7 @@
       <div>
         <h1 class="t-display" style="color:var(--col-primary)">Financial Insights</h1>
         <p class="t-body text-muted" style="margin-top:4px">
-          AI-driven intelligence and financial planning guidance.
+          Here’s what your Finance Buddy has learned about your finances so far.
         </p>
       </div>
       <button @click="$emit('trigger-ml-compute')" class="btn btn-primary" :disabled="mlComputing || loading">
