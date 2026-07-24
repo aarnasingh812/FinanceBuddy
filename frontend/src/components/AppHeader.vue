@@ -87,7 +87,7 @@ const navItems = [
   { label: 'Dashboard',    icon: 'dashboard'    },
   { label: 'Transactions', icon: 'receipt_long' },
   { label: 'Goals',        icon: 'flag'         },
-  { label: 'Insights',     icon: 'insights'     },
+  { label: 'Actionable Insights',     icon: 'insights'     },
 ]
 </script>
 
