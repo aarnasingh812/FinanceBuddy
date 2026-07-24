@@ -4,7 +4,7 @@
     <!-- ── Page Header ────────────────────────────────────────── -->
     <div class="page-heading fade-up">
       <div>
-        <h1 class="t-display" style="color:var(--col-primary)">Financial Insights</h1>
+        <h1 class="t-display" style="color:var(--col-primary)">Insights & Recommendations for You</h1>
         <p class="t-body text-muted" style="margin-top:4px">
           Here’s what your Finance Buddy has learned about your finances so far.
         </p>
