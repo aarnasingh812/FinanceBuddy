@@ -111,6 +111,11 @@ def normalize_date(value):
 
 
 def process_bulk_upload(file, user):
+    # Cap upload at 2 MB before openpyxl reads the stream.
+    # file.size is set by Django's InMemoryUploadedFile / TemporaryUploadedFile.
+    if file.size > 2 * 1024 * 1024:
+        return False, {'error': 'File too large (max 2 MB).'}
+
     try:
         wb = openpyxl.load_workbook(file)
     except Exception:
@@ -128,6 +133,10 @@ def process_bulk_upload(file, user):
 
     if not data_rows:
         return False, {'error': 'No data rows found in the uploaded file.'}
+
+    # Enforce the row cap on read — prevents bypassing the limit via blank-padded files.
+    if len(data_rows) > MAX_DATA_ROWS:
+        return False, {'error': f'Too many rows (max {MAX_DATA_ROWS}).'}
 
     errors = {}
     validated_entries = []

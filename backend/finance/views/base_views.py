@@ -14,6 +14,9 @@ from serializers.auth_serializers import LogoutRequestSerializer, LogoutResponse
 from helpers.bulk_upload_helper import generate_transaction_template, process_bulk_upload
 from helpers.jwt_token_helper import get_tokens_for_user
 from rest_framework_simplejwt.tokens import RefreshToken, TokenError
+from django.conf import settings
+from rest_framework_simplejwt.views import TokenRefreshView
+from rest_framework_simplejwt.exceptions import InvalidToken
 
 class RegisterView(APIView):
     
@@ -25,61 +28,130 @@ class RegisterView(APIView):
         if serializer.is_valid():
             user = serializer.save()
             tokens = get_tokens_for_user(user)
-            return Response({
+            response = Response({
                 "status": "success",
                 "message": "User created successfully",
-                "tokens": tokens,
+                "tokens": {
+                    "access": tokens["access"]
+                },
                 "user": {"id": user.id, "username": user.username}
             }, status=status.HTTP_201_CREATED)
+            response.set_cookie(
+                key='refresh_token',
+                value=tokens['refresh'],
+                httponly=True,
+                secure=True,
+                samesite='Lax',
+                max_age=7 * 24 * 60 * 60, # 7 days
+            )
+            return response
 
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
     
 class LoginView(APIView):
     permission_classes = [AllowAny]
+    # Explicitly throttle this view even when authenticated views opt-out.
+    throttle_classes = [AnonRateThrottle]
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
-        
+
         if serializer.is_valid():
             username = serializer.validated_data['username']
             password = serializer.validated_data['password']
-            try:
-                user = User.objects.get(username=username)    
-                if user.check_password(password):
-                    tokens = get_tokens_for_user(user)
-                    user_serializer = UserSerializer(user)
-                    return Response({
-                        "message": "Login successful",
-                        "tokens": tokens,
-                        "user": user_serializer.data
-                    }, status=status.HTTP_200_OK)
-                else:
-                    return Response({"error": "Invalid password"}, status=status.HTTP_401_UNAUTHORIZED)
-                
-            except User.DoesNotExist:
-                return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+
+            # authenticate() returns None for both "no such user" and
+            # "wrong password" — one identical code path, no enumeration oracle.
+            from django.contrib.auth import authenticate
+            user = authenticate(request, username=username, password=password)
+
+            if user is None:
+                return Response(
+                    {"error": "Invalid credentials"},
+                    status=status.HTTP_401_UNAUTHORIZED,
+                )
+
+            tokens = get_tokens_for_user(user)
+            user_serializer = UserSerializer(user)
+            response = Response({
+                "message": "Login successful",
+                "tokens": {
+                    "access": tokens["access"]
+                },
+                "user": user_serializer.data
+            }, status=status.HTTP_200_OK)
+            response.set_cookie(
+                key='refresh_token',
+                value=tokens['refresh'],
+                httponly=True,
+                secure=True,
+                samesite='Lax',
+                max_age=7 * 24 * 60 * 60,  # 7 days
+            )
+            return response
+
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        serializer = LogoutRequestSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        refresh_token = request.COOKIES.get('refresh_token')
+        if not refresh_token:
+            serializer = LogoutRequestSerializer(data=request.data)
+            if not serializer.is_valid():
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            refresh_token = serializer.validated_data["refresh_token"]
 
         try:
-            token = RefreshToken(serializer.validated_data["refresh_token"])
+            token = RefreshToken(refresh_token)
             token.blacklist()
             response_data = {"status": "success", "message": "Logout successful"}
-            return Response(
+            response = Response(
                 LogoutResponseSerializer(response_data).data,
                 status=status.HTTP_205_RESET_CONTENT,
             )
+            response.delete_cookie('refresh_token')
+            return response
         except TokenError:
-            return Response({"error": "Invalid or expired token"}, status=status.HTTP_400_BAD_REQUEST)
+            response = Response({"error": "Invalid or expired token"}, status=status.HTTP_400_BAD_REQUEST)
+            response.delete_cookie('refresh_token')
+            return response
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CookieTokenRefreshView(TokenRefreshView):
+    def post(self, request, *args, **kwargs):
+        refresh_token = request.COOKIES.get('refresh_token')
+        
+        if not refresh_token:
+            refresh_token = request.data.get('refresh')
+            
+        if not refresh_token:
+            return Response({"error": "Refresh token not found in cookies or request data"}, status=status.HTTP_400_BAD_REQUEST)
+            
+        serializer = self.get_serializer(data={"refresh": refresh_token})
+        
+        try:
+            serializer.is_valid(raise_exception=True)
+        except TokenError as e:
+            raise InvalidToken(e.args[0])
+            
+        res_data = serializer.validated_data
+        response = Response({"access": res_data.get("access")}, status=status.HTTP_200_OK)
+        
+        if "refresh" in res_data:
+            response.set_cookie(
+                key='refresh_token',
+                value=res_data["refresh"],
+                httponly=True,
+                secure=True,
+                samesite='Lax',
+                max_age=7 * 24 * 60 * 60, # 7 days
+            )
+        return response
                               
 
 class TransactionView(APIView):

@@ -364,29 +364,41 @@ def forecast_goals(user_id: int):
     # ------------------------------------------------------------------
     # 3. Classify goals and prepare for allocation
     # ------------------------------------------------------------------
-    # today is already set above; re-use it for deadline calculations
+    # Distribute total_savings across goals in deadline-priority order
+    # (soonest deadline first) so that the same rupee is never claimed
+    # by more than one goal simultaneously.
+    goals_sorted_by_deadline = sorted(goals, key=lambda g: g["deadline"])
+
+    pool = total_savings          # unallocated savings remaining
     goal_data = []
 
-    for goal in goals:
+    for goal in goals_sorted_by_deadline:
         target = float(goal["target_amount"])
         deadline = goal["deadline"]
-        remaining = max(0.0, target - total_savings)
-        progress = min(100.0, (total_savings / target) * 100.0) if target > 0 else 100.0
         months_rem = _months_between(today, deadline)
+
+        # This goal's share of the savings pool (capped at its target)
+        goal_share = min(pool, target)
+        goal_share = max(0.0, goal_share)   # never negative
+        pool -= goal_share                   # consume from pool
+        pool = max(0.0, pool)               # guard against float drift
+
+        remaining = max(0.0, target - goal_share)
+        progress = min(100.0, (goal_share / target) * 100.0) if target > 0 else 100.0
 
         g = {
             "goal_id": goal["id"],
             "goal_name": goal["name"],
             "target_amount": target,
             "deadline": deadline.isoformat(),
-            "current_savings": round(total_savings, 2),
+            "current_savings": round(goal_share, 2),
             "remaining_amount": round(remaining, 2),
             "progress_percent": round(progress, 2),
             "months_remaining": months_rem,
         }
 
         # Pre-classify terminal states
-        if total_savings >= target:
+        if goal_share >= target:
             g["status"] = "achieved"
         elif months_rem <= 0:
             g["status"] = "deadline_passed"

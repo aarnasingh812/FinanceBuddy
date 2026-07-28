@@ -1,5 +1,20 @@
 <template>
   <div class="app-root">
+    <!-- ── Toast notification ──────────────────────────────────── -->
+    <Transition name="toast">
+      <div
+        v-if="toast"
+        :class="['toast-popup', `toast-${toast.type}`]"
+        role="alert"
+        aria-live="assertive"
+      >
+        <span class="toast-icon">
+          {{ toast.type === 'warning' ? '⚠️' : toast.type === 'error' ? '❌' : 'ℹ️' }}
+        </span>
+        <span class="toast-message">{{ toast.message }}</span>
+        <button class="toast-close" @click="dismissToast" aria-label="Dismiss">✕</button>
+      </div>
+    </Transition>
     <!-- Login screen -->
     <LoginPage
       v-if="currentScreen === 'login'"
@@ -20,7 +35,7 @@
 
     <main class="dashboard">
       <!-- Insights page -->
-      <div v-if="activePage === 'Insights'" class="dash-inner" style="padding-top:var(--space-xl)">
+      <div v-if="activePage === 'Actionable Insights'" class="dash-inner" style="padding-top:var(--space-xl)">
         <InsightsPage
           :insights-data="insightsData"
           :loading="insightsLoading"
@@ -213,12 +228,104 @@ const currentScreen = ref('login')
 const activePage    = ref('Dashboard')
 const currentUser   = ref(null)
 
+// ── Toast notification ───────────────────────────────────────────
+const toast = ref(null)   // { message, type: 'warning'|'error'|'info' }
+let toastTimer = null
+
+function showToast(message, type = 'warning', durationMs = 8000) {
+  if (toastTimer) clearTimeout(toastTimer)
+  toast.value = { message, type }
+  toastTimer = setTimeout(() => { toast.value = null }, durationMs)
+}
+function dismissToast() {
+  if (toastTimer) clearTimeout(toastTimer)
+  toast.value = null
+}
+
 function handleUnauthorized() {
   localStorage.removeItem('access_token')
-  localStorage.removeItem('refresh_token')
   localStorage.removeItem('user')
   currentUser.value = null
   currentScreen.value = 'login'
+}
+
+// ── Fetch Interceptor for HTTP cookies and automatic token refreshing ──
+const originalFetch = window.fetch
+let isRefreshing = false
+let refreshSubscribers = []
+
+function subscribeTokenRefresh(cb) {
+  refreshSubscribers.push(cb)
+}
+
+function onRefreshed(token) {
+  refreshSubscribers.forEach(cb => cb(token))
+  refreshSubscribers = []
+}
+
+window.fetch = async function (url, options = {}) {
+  const urlString = typeof url === 'string' ? url : (url instanceof Request ? url.url : '')
+
+  if (urlString.includes('/api/token/refresh/')) {
+    return originalFetch(url, options)
+  }
+
+  if (urlString.includes('http://localhost:8000/api/')) {
+    options.credentials = 'include'
+  }
+
+  let res = await originalFetch(url, options)
+
+  if (res.status === 401 && urlString.includes('http://localhost:8000/api/')) {
+    if (!isRefreshing) {
+      isRefreshing = true
+      try {
+        const refreshRes = await originalFetch('http://localhost:8000/api/token/refresh/', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include'
+        })
+        if (refreshRes.ok) {
+          const data = await refreshRes.json()
+          localStorage.setItem('access_token', data.access)
+          isRefreshing = false
+          onRefreshed(data.access)
+        } else {
+          isRefreshing = false
+          handleUnauthorized()
+          return res
+        }
+      } catch (err) {
+        isRefreshing = false
+        handleUnauthorized()
+        return res
+      }
+    }
+
+    const retryWithNewToken = new Promise((resolve) => {
+      subscribeTokenRefresh((token) => {
+        const newOptions = { ...options }
+        if (newOptions.headers) {
+          if (newOptions.headers instanceof Headers) {
+            newOptions.headers.set('Authorization', `Bearer ${token}`)
+          } else if (Array.isArray(newOptions.headers)) {
+            const idx = newOptions.headers.findIndex(h => h[0].toLowerCase() === 'authorization')
+            if (idx > -1) newOptions.headers[idx][1] = `Bearer ${token}`
+            else newOptions.headers.push(['Authorization', `Bearer ${token}`])
+          } else {
+            newOptions.headers['Authorization'] = `Bearer ${token}`
+          }
+        } else {
+          newOptions.headers = { 'Authorization': `Bearer ${token}` }
+        }
+        resolve(originalFetch(url, newOptions))
+      })
+    })
+
+    return retryWithNewToken
+  }
+
+  return res
 }
 
 onMounted(async () => {
@@ -259,25 +366,22 @@ function handleRegistered(user) {
 }
 
 async function handleLogout() {
-  const refreshToken = localStorage.getItem('refresh_token')
   const accessToken = localStorage.getItem('access_token')
 
   // Clear local state first for immediate UI response
   localStorage.removeItem('access_token')
-  localStorage.removeItem('refresh_token')
   localStorage.removeItem('user')
   currentUser.value = null
   currentScreen.value = 'login'
 
-  if (refreshToken && accessToken) {
+  if (accessToken) {
     try {
       await fetch('http://localhost:8000/api/finance-buddy/logout', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${accessToken}`
-        },
-        body: JSON.stringify({ refresh_token: refreshToken })
+        }
       })
     } catch (err) {
       console.error('Logout API failed:', err)
@@ -354,6 +458,13 @@ async function triggerMlCompute() {
       } else {
         mlComputing.value = false
       }
+    } else if (resp.status === 429) {
+      // Rate limit hit — tell the user clearly, don't leave spinner running
+      mlComputing.value = false
+      showToast(
+        'You\'ve triggered too many analyses. Please wait an hour before refreshing insights again.',
+        'warning'
+      )
     } else {
       mlComputing.value = false
     }
@@ -377,7 +488,7 @@ async function pollMlStatus(taskId) {
       const data = await resp.json()
       if (data.state === 'SUCCESS') {
         await fetchDashboard()
-        if (activePage.value === 'Insights') {
+        if (activePage.value === 'Actionable Insights') {
           await fetchInsights()
         } else {
           insightsFetched = false
@@ -424,7 +535,7 @@ async function fetchInsights() {
 
 // Fetch insights when navigating to the Insights tab
 watch(activePage, (newPage) => {
-  if (newPage === 'Insights' && !insightsFetched) {
+  if (newPage === 'Actionable Insights' && !insightsFetched) {
     fetchInsights()
   }
 })
@@ -625,4 +736,59 @@ const spendingCenterLabel = computed(() => {
 .legend-value { font-weight: 600; color: var(--col-text-primary); text-align: right; }
 .legend-pct   { width: 28px; text-align: right; }
 
+/* ── Toast notification ────────────────────────────────────────── */
+.toast-popup {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  max-width: 480px;
+  width: calc(100% - 48px);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+  font-size: 0.9rem;
+  font-weight: 500;
+  backdrop-filter: blur(8px);
+}
+.toast-warning {
+  background: rgba(251, 191, 36, 0.15);
+  border-color: rgba(251, 191, 36, 0.35);
+  color: #fcd34d;
+}
+.toast-error {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: #fca5a5;
+}
+.toast-info {
+  background: rgba(57, 128, 244, 0.15);
+  border-color: rgba(57, 128, 244, 0.35);
+  color: #93c5fd;
+}
+.toast-icon { font-size: 1.1rem; flex-shrink: 0; }
+.toast-message { flex: 1; line-height: 1.45; }
+.toast-close {
+  background: transparent;
+  border: none;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: opacity 0.2s;
+  flex-shrink: 0;
+}
+.toast-close:hover { opacity: 1; }
+
+/* slide-up enter/leave animation */
+.toast-enter-active, .toast-leave-active { transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+.toast-enter-from { opacity: 0; transform: translateX(-50%) translateY(16px); }
+.toast-leave-to   { opacity: 0; transform: translateX(-50%) translateY(16px); }
 </style>

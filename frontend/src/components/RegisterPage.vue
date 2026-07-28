@@ -97,9 +97,6 @@
             <div class="field-group">
               <div class="password-label-row">
                 <label class="t-label text-muted" for="password">PASSWORD</label>
-                <button type="button" class="show-btn" @click="showPassword = !showPassword">
-                  {{ showPassword ? 'HIDE' : 'SHOW' }}
-                </button>
               </div>
               <div class="input-wrap">
                 <input
@@ -112,7 +109,12 @@
                   autocomplete="new-password"
                   @blur="validateField('password')"
                 />
-                <span class="material-symbols-outlined input-icon">lock</span>
+                <span
+                  class="material-symbols-outlined password-toggle-icon"
+                  @click="showPassword = !showPassword"
+                >
+                  {{ showPassword ? 'visibility' : 'visibility_off' }}
+                </span>
               </div>
 
               <!-- Strength meter -->
@@ -151,9 +153,11 @@
                   autocomplete="new-password"
                   @blur="validateField('confirm')"
                 />
-                <span class="material-symbols-outlined input-icon"
-                      :style="{ color: form.confirm && form.confirm === form.password ? 'var(--col-accent)' : '' }">
-                  {{ form.confirm && form.confirm === form.password ? 'check_circle' : 'lock' }}
+                <span
+                  class="material-symbols-outlined password-toggle-icon"
+                  @click="showPassword = !showPassword"
+                >
+                  {{ showPassword ? 'visibility' : 'visibility_off' }}
                 </span>
               </div>
               <span v-if="errors.confirm" class="field-error">{{ errors.confirm }}</span>
@@ -323,7 +327,6 @@ async function handleSubmit() {
     if (res.ok) {
       // Store tokens
       localStorage.setItem('access_token', data.tokens.access)
-      localStorage.setItem('refresh_token', data.tokens.refresh)
       if (data.user) {
         localStorage.setItem('user', JSON.stringify(data.user))
       }
@@ -527,19 +530,16 @@ async function handleSubmit() {
 .password-label-row {
   display: flex; justify-content: space-between; align-items: center;
 }
-.show-btn {
-  font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.08em;
-  color: var(--col-primary); background: none; border: none;
-  cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
-  font-family: inherit;
-  padding: 4px 8px;
-  position: relative;
-  z-index: 2;
-  -webkit-user-select: none;
+.password-toggle-icon {
+  position: absolute; right: 12px; top: 50%;
+  transform: translateY(-50%);
+  font-size: 20px; color: var(--col-text-faint);
+  cursor: pointer;
   user-select: none;
+  transition: color var(--dur-fast);
 }
-.show-btn:hover {
-  opacity: 0.7;
+.password-toggle-icon:hover {
+  color: var(--col-primary);
 }
 
 /* Strength meter */

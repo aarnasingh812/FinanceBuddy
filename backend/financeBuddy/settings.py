@@ -24,12 +24,13 @@ environ.Env.read_env(os.path.join(BASE_DIR, ".env"))
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-589bp*1vbzw6+0i@9z+j^n%6n278x+wg7(65teio=hw3mnp_qr'
+SECRET_KEY = env("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env.bool("DEBUG", default=False)
 
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["127.0.0.1"])
+#ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
@@ -75,11 +76,23 @@ MIDDLEWARE = [
 from datetime import timedelta
 
 REST_FRAMEWORK = {
-    
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        
         'rest_framework_simplejwt.authentication.JWTAuthentication',
-    )    
+    ),
+    # Rate-limit unauthenticated endpoints (login, register) to mitigate
+    # brute-force / credential-stuffing attacks.
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '10/min',
+        # Per-user cap for heavy authenticated endpoints.
+        # Individual views can tighten this with throttle_classes + a custom scope.
+        'user': '60/min',
+        # Tight scope used exclusively by MLComputeView.
+        'ml_compute': '6/hour',
+    },
 }
 
 SIMPLE_JWT = {
@@ -89,7 +102,11 @@ SIMPLE_JWT = {
     'BLACKLIST_AFTER_ROTATION': True,
 }
 
-CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
 
 ROOT_URLCONF = 'financeBuddy.urls'
 
