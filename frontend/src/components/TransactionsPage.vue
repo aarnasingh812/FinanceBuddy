@@ -349,7 +349,7 @@
                         @change="customCategory = ''">
                   <option value="" disabled>Select a category</option>
                   <optgroup label="Common">
-                    <option v-for="c in CATEGORIES" :key="c" :value="c">{{ capitalise(c) }}</option>
+                    <option v-for="c in CATEGORIES" :key="c" :value="c">{{ CATEGORY_LABELS[c] || capitalise(c) }}</option>
                   </optgroup>
                   <option value="__custom__">+ Custom category…</option>
                 </select>
@@ -595,10 +595,26 @@ onMounted(() => fetchTransactions())
 
 // ── Add Transaction Modal ─────────────────────────────────────────
 const CATEGORIES = [
-  'food/grocery', 'utilities/bills', 'travel', 'education', 'EMIs',
-  'health', 'personal expenses', 'rental', 'investment/SIPs',
-  'salary', 'incentives/bonus', 'entertainment', 'shopping', 'other',
+  'food/grocery', 'utilities/bills', 'travel', 'education', 'emis',
+  'health', 'personal expenses', 'rentals', 'investment/sips',
+  'salary', 'incentives/bonus', 'entertainment', 'other',
 ]
+
+const CATEGORY_LABELS = {
+  'food/grocery':     'Food/Grocery',
+  'utilities/bills':  'Utilities/Bills',
+  'travel':           'Travel',
+  'education':        'Education',
+  'emis':             'EMIs',
+  'health':           'Health',
+  'personal expenses':'Personal Expenses',
+  'rentals':          'Rentals',
+  'investment/sips':  'Investment/SIPs',
+  'salary':           'Salary',
+  'incentives/bonus': 'Incentives/Bonus',
+  'entertainment':    'Entertainment',
+  'other':            'Other',
+}
 
 const todayISO = new Date().toISOString().slice(0, 10)
 
@@ -913,13 +929,15 @@ const CAT = {
   'utilities/bills':  { bg:'#e3f2fd', col:'#1565c0', icon:'bolt'            },
   'travel':           { bg:'#fff8e1', col:'#f57f17', icon:'flight_takeoff'  },
   'education':        { bg:'#f3e5f5', col:'#7b1fa2', icon:'school'          },
-  'EMIs':             { bg:'#fce4ec', col:'#c62828', icon:'account_balance' },
+  'emis':             { bg:'#fce4ec', col:'#c62828', icon:'account_balance' },
   'health':           { bg:'#e8f5e9', col:'#1b5e20', icon:'favorite'        },
   'personal expenses':{ bg:'#fff3e0', col:'#e65100', icon:'shopping_bag'    },
-  'rental':           { bg:'#e8eaf6', col:'#283593', icon:'home'            },
-  'investment/SIPs':  { bg:'#e0f7fa', col:'#006064', icon:'trending_up'     },
+  'rentals':          { bg:'#e8eaf6', col:'#283593', icon:'home'            },
+  'investment/sips':  { bg:'#e0f7fa', col:'#006064', icon:'trending_up'     },
   'salary':           { bg:'#e8f5e9', col:'#1b5e20', icon:'payments'        },
   'incentives/bonus': { bg:'#fffde7', col:'#f57f17', icon:'star'            },
+  'entertainment':    { bg:'#fce4ec', col:'#880e4f', icon:'movie'           },
+  'other':            { bg:'#f5f5f5', col:'#424242', icon:'category'        },
 }
 const DP = { bg:'var(--col-surface-mid)', col:'var(--col-text-muted)', icon:'receipt' }
 function catBg(c)       { return (CAT[c]||DP).bg }

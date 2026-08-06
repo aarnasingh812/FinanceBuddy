@@ -36,19 +36,19 @@ class Transaction(models.Model):
         ('Expense', 'Expense'),
     ]
     CATEGORIES = [
-        ('Food/Grocery', 'Food/Grocery'),
-        ('Entertainment', 'Entertainment'),
-        ('EMIs', 'EMIs'),
-        ('Health', 'Health'),
-        ('Education', 'Education'),
-        ('Travel', 'Travel'),
-        ('Personal Expenses', 'Personal Expenses'),
-        ('Investment/SIPs', 'Investment/SIPs'),
-        ('Salary', 'Salary'),
-        ('Rentals', 'Rentals'),
-        ('Utilities/Bills', 'Utilities/Bills'),
-        ('Incentives/Bonus', 'Incentives/Bonus'),
-        ('Other', 'Other'),
+        ('food/grocery', 'Food/Grocery'),
+        ('entertainment', 'Entertainment'),
+        ('emis', 'EMIs'),
+        ('health', 'Health'),
+        ('education', 'Education'),
+        ('travel', 'Travel'),
+        ('personal expenses', 'Personal Expenses'),
+        ('investment/sips', 'Investment/SIPs'),
+        ('salary', 'Salary'),
+        ('rentals', 'Rentals'),
+        ('utilities/bills', 'Utilities/Bills'),
+        ('incentives/bonus', 'Incentives/Bonus'),
+        ('other', 'Other'),
     ]
 
     user = models.ForeignKey(User, on_delete=models.CASCADE)

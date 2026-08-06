@@ -42,7 +42,7 @@ class MLComputeView(APIView):
         last_result = (
             MLResult.objects
             .filter(user=request.user, feature='task_id')
-            .order_by('-created_at')
+            .order_by('-computed_at')
             .first()
         )
 

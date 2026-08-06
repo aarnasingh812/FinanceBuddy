@@ -612,19 +612,19 @@ const savingsChartData = computed(() => {
 
 // ── Spending donut (from API) ────────────────────────────────────
 const CATEGORY_COLORS = {
-  'Food/Grocery':      '#e67e22',
-  'Entertainment':     '#e74c3c',
-  'EMIs':              '#c0392b',
-  'Health':            '#d97706',
-  'Education':         '#8b5cf6',
-  'Travel':            '#0ea5e9',
-  'Personal Expenses': '#ec4899',
-  'Investment/SIPs':   '#006c49',
-  'Salary':            '#10b981',
-  'Rentals':           '#3980f4',
-  'Utilities/Bills':   '#0891b2',
-  'Incentives/Bonus':  '#f59e0b',
-  'Other':             '#9ca3af',
+  'food/grocery':      '#e67e22',
+  'entertainment':     '#e74c3c',
+  'emis':              '#c0392b',
+  'health':            '#d97706',
+  'education':         '#8b5cf6',
+  'travel':            '#0ea5e9',
+  'personal expenses': '#ec4899',
+  'investment/sips':   '#006c49',
+  'salary':            '#10b981',
+  'rentals':           '#3980f4',
+  'utilities/bills':   '#0891b2',
+  'incentives/bonus':  '#f59e0b',
+  'other':             '#9ca3af',
 }
 const FALLBACK_COLORS = ['#6366f1', '#14b8a6', '#f43f5e', '#a855f7', '#64748b']
 

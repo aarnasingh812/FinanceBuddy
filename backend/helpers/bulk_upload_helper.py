@@ -24,9 +24,9 @@ DB_FIELDS = list(COLUMN_MAPPING.values())
 TRANSACTION_TYPES = ['Income', 'Expense']
 
 CATEGORIES = [
-    'rental', 'food/grocery', 'utilities/bills', 'entertainment', 'EMIs',
+    'rental', 'food/grocery', 'utilities/bills', 'entertainment', 'emis',
     'education', 'health', 'travel', 'personal expenses', 'other',
-    'investment/SIPs', 'salary', 'incentives/bonus',
+    'investment/sips', 'salary', 'incentives/bonus',
 ]
 
 MAX_DATA_ROWS = 500

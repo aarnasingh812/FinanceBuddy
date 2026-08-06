@@ -312,7 +312,7 @@ async function handleSubmit() {
   apiError.value = ''
 
   try {
-    const res = await fetch('http://localhost:8000/api/finance-buddy/register/', {
+    const res = await fetch('http://localhost:8000/api/finance-buddy/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
