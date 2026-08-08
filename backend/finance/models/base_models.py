@@ -36,25 +36,24 @@ class Transaction(models.Model):
         ('Expense', 'Expense'),
     ]
     CATEGORIES = [
-        ('Food/Grocery', 'Food/Grocery'),
-        ('Entertainment', 'Entertainment'),
-        ('EMIs', 'EMIs'),
-        ('Health', 'Health'),
-        ('Education', 'Education'),
-        ('Travel', 'Travel'),
-        ('Personal Expenses', 'Personal Expenses'),
-        ('Investment/SIPs', 'Investment/SIPs'),
-        ('Salary', 'Salary'),
-        ('Rentals', 'Rentals'),
-        ('Utilities/Bills', 'Utilities/Bills'),
-        ('Incentives/Bonus', 'Incentives/Bonus'),
-        ('Other', 'Other'),
+        ('food/grocery', 'Food/Grocery'),
+        ('entertainment', 'Entertainment'),
+        ('emis', 'EMIs'),
+        ('health', 'Health'),
+        ('education', 'Education'),
+        ('travel', 'Travel'),
+        ('personal expenses', 'Personal Expenses'),
+        ('investment/sips', 'Investment/SIPs'),
+        ('salary', 'Salary'),
+        ('rentals', 'Rentals'),
+        ('utilities/bills', 'Utilities/Bills'),
+        ('incentives/bonus', 'Incentives/Bonus'),
+        ('other', 'Other'),
     ]
-
 
     user = models.ForeignKey(User, on_delete=models.CASCADE)
     title = models.CharField(max_length=255)
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    amount = models.DecimalField(max_digits=18, decimal_places=2)
     transaction_type = models.CharField(max_length=10, choices=TRANSACTION_TYPES)
     date = models.DateField()
     category = models.CharField(max_length=100, choices=CATEGORIES)

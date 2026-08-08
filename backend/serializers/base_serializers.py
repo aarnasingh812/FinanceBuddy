@@ -1,4 +1,6 @@
 from rest_framework import serializers
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 
 from finance.models import User, Transaction, Goal, RecurringTransaction
 
@@ -14,6 +16,14 @@ class RegisterSerializer(serializers.ModelSerializer):
         extra_kwargs = {
             'password': {'write_only': True}
         }
+
+    def validate_password(self, value):
+        try:
+            validate_password(value)
+        except DjangoValidationError as e:
+            raise serializers.ValidationError(list(e.messages))
+        return value
+
     def create(self, validated_data):
         return User.objects.create_user(**validated_data)
 
@@ -24,9 +34,9 @@ class LoginSerializer(serializers.Serializer):
 class TransactionCreateSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=255)
     amount = serializers.DecimalField(decimal_places=2, max_digits=18)
-    transaction_type = serializers.CharField(max_length=10)
+    transaction_type = serializers.ChoiceField(choices=Transaction.TRANSACTION_TYPES)
     date = serializers.DateField()
-    category = serializers.CharField(max_length=255)
+    category = serializers.ChoiceField(choices=Transaction.CATEGORIES)
     
     def create(self, validated_data):
         return Transaction.objects.create(user=self.context['user'], **validated_data)
@@ -61,9 +71,9 @@ class TransactionUpdateSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     title = serializers.CharField(max_length=255, required=False)
     amount = serializers.DecimalField(decimal_places=2, max_digits=18, required=False)
-    transaction_type = serializers.CharField(max_length=10, required=False)
+    transaction_type = serializers.ChoiceField(choices=Transaction.TRANSACTION_TYPES, required=False)
     date = serializers.DateField(required=False)
-    category = serializers.CharField(max_length=255, required=False)
+    category = serializers.ChoiceField(choices=Transaction.CATEGORIES, required=False)
     
     def update(self, instance, validated_data):
         instance.title = validated_data.get('title', instance.title)
